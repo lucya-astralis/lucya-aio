@@ -242,6 +242,24 @@ def lucent_body(token: str, setup_code: str) -> dict:
                      values["bind"])
 
 
+def restore_body(kind: str, image: str, backups_mount: dict, run: str, script: str) -> dict:
+    """A one-off container to put an archive back: the tool's own image and
+    user (only it owns its files), its data volume, the backups read-only,
+    no network."""
+    mount = {"Type": backups_mount["Type"], "Target": "/backups", "ReadOnly": True,
+             "Source": backups_mount.get("Name") or backups_mount["Source"]}
+    return {
+        "Image": image,
+        "Entrypoint": ["python"],
+        "Cmd": ["-c", script, f"/backups/{run}/{kind}.tar.gz", "/data"],
+        "Labels": {f"{LABEL}.oneoff": f"restore-{kind}"},
+        "HostConfig": {"Mounts": [{"Type": "volume", "Source": settings.volume(kind), "Target": "/data"}, mount],
+                       "NetworkMode": "none", "CapDrop": ["ALL"], "SecurityOpt": ["no-new-privileges:true"],
+                       "ReadonlyRootfs": True, "Tmpfs": {"/tmp": "rw,noexec,nosuid,size=64m"},
+                       "Privileged": False},
+    }
+
+
 def mine() -> str:
     """The label filter for this helper's containers. The label's value is
     the helper's prefix: two helpers on one host (a test beside the real

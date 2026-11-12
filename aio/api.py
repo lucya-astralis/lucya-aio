@@ -64,6 +64,10 @@ def create_app(stack: Stack, token: str) -> FastAPI:
     def backup():
         return stack.backup_now()
 
+    @app.post("/backups/{run}/restore", status_code=202, dependencies=[Depends(authorized)])
+    async def restore(run: str, request: Request):
+        return stack.restore(run, (await _body(request)).get("kinds"))
+
     @app.put("/backup/schedule", dependencies=[Depends(authorized)])
     async def schedule(request: Request):
         b = await _body(request)

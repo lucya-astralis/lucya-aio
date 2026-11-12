@@ -518,3 +518,81 @@ def test_a_second_helper_on_the_host_is_not_seen(fake, stack, api):
     assert api.put("/tools/arca", json={"port": 8070, "ui_url": "http://x.test"}).status_code == 202
     assert fake.containers["other"]["State"]["Running"]           # untouched
     assert tool(fake, "arca")["body"]["Labels"]["systems.lucya.aio"] == "lucya-"
+
+
+# ---- restoring ----------------------------------------------------------------------------------
+@pytest.fixture()
+def with_self(fake):
+    from aio.config import settings
+    fake.containers["self"] = {"Id": "self", "Name": "/lucya-aio", "Image": "x", "body": {},
+                               "State": {"Running": True}, "Config": {"Image": "x", "Labels": {}},
+                               "Mounts": [{"Type": "volume", "Name": "lucya-backups", "Source": "/var/lib/x",
+                                           "Destination": "/backups"}]}
+    settings.self_id = "self"
+    return fake
+
+
+def _a_backup(api, stack):
+    api.post("/backup")
+    return stack.backups.list()[0]["name"]
+
+
+def test_restore_backs_up_first_then_unpacks_into_the_stopped_tool(with_self, stack, api):
+    fake = with_self
+    api.put("/tools/arca", json={"port": 8070, "ui_url": "http://x.test"})
+    run = _a_backup(api, stack)
+    arca = tool(fake, "arca")
+    r = api.post(f"/backups/{run}/restore", json={"kinds": ["arca"]})
+    assert r.status_code == 202 and r.json() == {"kinds": ["arca"]}
+    runs = stack.backups.list()
+    assert runs[0]["why"] == f"vor dem Wiederherstellen von {run}" and runs[0]["kinds"] == ["arca"]
+    one = fake.oneoffs[-1]
+    hc = one["HostConfig"]
+    assert hc["NetworkMode"] == "none" and hc["ReadonlyRootfs"] and hc["CapDrop"] == ["ALL"]
+    assert {"Type": "volume", "Source": "lucya-arca-data", "Target": "/data"} in hc["Mounts"]
+    assert {"Type": "volume", "Source": "lucya-backups", "Target": "/backups", "ReadOnly": True} in hc["Mounts"]
+    assert one["Cmd"][-2:] == [f"/backups/{run}/arca.tar.gz", "/data"] and "extractall" in one["Cmd"][1]
+    assert one["Image"] == "lucya-images/arca:current"
+    assert tool(fake, "arca")["Id"] == arca["Id"] and tool(fake, "arca")["State"]["Running"]
+    assert not [c for c in fake.containers.values() if c["Name"] == "/lucya-arca-restore"]
+    job = next(t for t in api.get("/state").json()["tools"] if t["kind"] == "arca")["job"]
+    assert job["step"] == "ready" and job["kind"] == "restore"
+
+
+def test_restore_takes_lucent_last(with_self, stack, api):
+    fake = with_self
+    stack.boot(TOKEN, "X")
+    api.put("/tools/fila", json={"port": 8085, "ui_url": "http://x.test"})
+    run = _a_backup(api, stack)
+    assert api.post(f"/backups/{run}/restore", json={"kinds": ["lucent", "fila"]}).json() == {"kinds": ["fila", "lucent"]}
+    assert [o["Labels"]["systems.lucya.aio.oneoff"] for o in fake.oneoffs[-2:]] == ["restore-fila", "restore-lucent"]
+
+
+@pytest.mark.parametrize("run, kinds, word", [
+    ("../../etc", ["arca"], "nichts"), ("2026-11-12_030000", ["arca"], "nichts"),
+    (None, [], "Wähle"), (None, ["root"], "Unbekannt"), (None, "arca", "Wähle")])
+def test_restore_refuses_what_is_not_there(with_self, stack, api, run, kinds, word):
+    api.put("/tools/arca", json={"port": 8070, "ui_url": "http://x.test"})
+    real = _a_backup(api, stack)
+    r = api.post(f"/backups/{run or real}/restore", json={"kinds": kinds})
+    assert r.status_code in (404, 422) and (r.status_code == 404 or word in r.json()["detail"])
+    assert not [o for o in with_self.oneoffs if "restore" in o["Labels"].get("systems.lucya.aio.oneoff", "")]
+
+
+def test_a_failed_unpack_starts_the_tool_again_and_says_why(with_self, stack, api):
+    fake = with_self
+    api.put("/tools/strata", json={"port": 8086, "ui_url": "http://x.test"})
+    run = _a_backup(api, stack)
+    fake.oneoff_code = 1
+    api.post(f"/backups/{run}/restore", json={"kinds": ["strata"]})
+    job = next(t for t in api.get("/state").json()["tools"] if t["kind"] == "strata")["job"]
+    assert job["step"] == "error" and "Entpacken" in job["error"]
+    assert tool(fake, "strata")["State"]["Running"]
+
+
+def test_restore_needs_the_tool_to_be_there(with_self, stack, api):
+    api.put("/tools/arca", json={"port": 8070, "ui_url": "http://x.test"})
+    run = _a_backup(api, stack)
+    api.delete("/tools/arca")
+    r = api.post(f"/backups/{run}/restore", json={"kinds": ["arca"]})
+    assert r.status_code == 422 and "hinzufügen" in r.json()["detail"]

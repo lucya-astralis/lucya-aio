@@ -36,3 +36,52 @@ def test_snapshot_takes_every_sqlite_file_whole(tmp_path):
         assert sqlite3.connect(copy).execute("SELECT COUNT(*) FROM t").fetchone()[0] == 50
     assert not (data / ".lucya-backup").exists()
     assert out.stderr.decode().split() == ["console/lucent_outbox.sqlite", "gallery.db"]
+
+
+from aio.backup import RESTORE  # noqa: E402
+
+
+def _run(script, *args):
+    return subprocess.run([sys.executable, "-c", script, *map(str, args)], capture_output=True)
+
+
+def test_restore_puts_the_archive_back_and_nothing_old_stays(tmp_path):
+    data = tmp_path / "data"
+    (data / "console").mkdir(parents=True)
+    c = sqlite3.connect(data / "app.db")
+    c.execute("CREATE TABLE t (x)")
+    c.execute("INSERT INTO t VALUES ('then')")
+    c.commit()
+    c.close()
+    (data / "console" / "key").write_text("then")
+    archive = tmp_path / "app.tar.gz"
+    archive.write_bytes(_run(SNAPSHOT, data).stdout)
+    # what happens after the backup: a change, a new file, a new folder
+    c = sqlite3.connect(data / "app.db")
+    c.execute("UPDATE t SET x = 'now'")
+    c.commit()
+    c.close()
+    (data / "console" / "key").write_text("now")
+    (data / "later.txt").write_text("new")
+    (data / "newdir").mkdir()
+    r = _run(RESTORE, archive, data)
+    assert r.returncode == 0, r.stderr
+    assert sqlite3.connect(data / "app.db").execute("SELECT x FROM t").fetchone()[0] == "then"
+    assert (data / "console" / "key").read_text() == "then"
+    assert not (data / "later.txt").exists() and not (data / "newdir").exists()
+
+
+def test_restore_refuses_an_archive_that_leaves_data(tmp_path):
+    data = tmp_path / "data"
+    data.mkdir()
+    (data / "keep.txt").write_text("still here")
+    evil = tmp_path / "evil.tar.gz"
+    with tarfile.open(evil, "w:gz") as tar:
+        info = tarfile.TarInfo("../outside.txt")
+        payload = b"x"
+        info.size = len(payload)
+        tar.addfile(info, io.BytesIO(payload))
+    r = _run(RESTORE, evil, data)
+    assert r.returncode != 0 and b"refused" in r.stderr
+    assert (data / "keep.txt").read_text() == "still here"          # nothing was cleared
+    assert not (tmp_path / "outside.txt").exists()

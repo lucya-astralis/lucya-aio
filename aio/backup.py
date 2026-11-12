@@ -70,6 +70,27 @@ shutil.rmtree(tmp, ignore_errors=True)
 print(" ".join(sorted(copies)) or "-", file=sys.stderr)
 """
 
+# runs in a one-off container with the tool's image, as its user, with its
+# data volume at /data and the backups read-only at /backups:
+#   python -c RESTORE /backups/<run>/<kind>.tar.gz /data
+RESTORE = r"""
+import os, shutil, sys, tarfile
+archive, dst = sys.argv[1], sys.argv[2]
+with tarfile.open(archive) as tar:
+    members = tar.getmembers()
+    for m in members:                      # refuse anything that would leave /data
+        if m.name.startswith("/") or ".." in m.name.split("/") or not (m.isfile() or m.isdir()):
+            sys.exit(f"refused: {m.name}")
+    for name in os.listdir(dst):           # what is there now goes, so nothing old stays beside it
+        path = os.path.join(dst, name)
+        shutil.rmtree(path) if os.path.isdir(path) and not os.path.islink(path) else os.remove(path)
+    tar.extractall(dst, members=members, filter="data")
+print(len(members), file=sys.stderr)
+"""
+
+RUN_NAME = r"^\d{4}-\d{2}-\d{2}_\d{6}(-\d+)?$"
+
+
 def snapshot_argv() -> list[str]:
     return ["python", "-c", SNAPSHOT, "/data"]
 
@@ -159,6 +180,15 @@ class Backups:
         runs = sorted((p for p in self.root.iterdir() if p.is_dir()), reverse=True)
         for old in runs[keep:]:
             shutil.rmtree(old, ignore_errors=True)
+
+    # ---- restoring ----------------------------------------------------------------------
+    def archive(self, run: str, kind: str) -> Path | None:
+        """The archive of `kind` in the run `run`, if there is one."""
+        import re
+        if not re.fullmatch(RUN_NAME, run or ""):
+            return None
+        path = self.root / run / f"{kind}.tar.gz"
+        return path if path.is_file() else None
 
     # ---- the daily run ------------------------------------------------------------------
     def due(self, now: datetime) -> bool:

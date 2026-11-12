@@ -65,6 +65,7 @@ Anlegen als `LUCENT_AIO_TOKEN` mitgibt.
 | `POST /tools/{kind}/update` | auch `lucent`: sichern → Image ziehen → Container mit neuem Image neu anlegen → warten; antwortet er nicht, läuft das alte Image wieder |
 | `POST /updates/all` | jedes Update nacheinander, Lucent zuletzt |
 | `POST /backup` | sichert alle laufenden Container |
+| `POST /backups/{lauf}/restore` | `{kinds}`: Sicherung des jetzigen Stands, dann je Tool anhalten → entpacken → starten, Lucent zuletzt |
 | `PUT /backup/schedule` | `{enabled, time: "HH:MM", keep}`: tägliche Sicherung, wie viele bleiben |
 
 ## Aperture
@@ -110,12 +111,13 @@ vollständig auch im WAL-Modus und im laufenden Betrieb, alles andere
 (Schlüssel, Kopplung) wie es ist. Ein
 Archiv ist `/data`, so wie es zurück soll:
 
-```bash
-docker run --rm -v lucya-arca-data:/data -v lucya-backups:/backups alpine \
-  sh -c 'cd /data && tar xzf /backups/2026-11-12_033000/arca.tar.gz'
-```
-
-Vorher das Tool stoppen (`docker stop lucya-arca`), danach wieder starten.
+Wiederherstellen geht über Lucent (System → Sicherung) oder
+`POST /backups/<lauf>/restore {"kinds": ["arca", …]}`. Der Helfer sichert
+erst den jetzigen Stand, hält dann jedes gewählte Tool an, packt das Archiv
+mit einem kurzen Container ohne Netz in sein Volume (mit dem Image und
+Benutzer des Tools, die Ablage nur lesbar; was seitdem dazukam, ist danach
+weg) und startet es wieder. Lucent kommt zuletzt. Danach koppelt Lucent die
+Tools neu, denn ihre Kopplung ist jetzt die aus dem Archiv.
 
 Ohne `/backups` gibt es keine Sicherungen, und vor einem Update wird dann
 auch keine gemacht.

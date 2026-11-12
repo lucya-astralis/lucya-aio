@@ -395,6 +395,90 @@ class Stack:
             log.warning("Sicherung: %s", e)
             self.backups.last_error = str(e)
 
+    # ---- restoring -------------------------------------------------------------------------
+    def _backups_mount(self) -> dict:
+        """Where /backups comes from for this helper, to give the same to a
+        one-off container."""
+        me = self.docker.inspect(settings.self_id) if settings.self_id else None
+        for m in (me or {}).get("Mounts", []):
+            if m.get("Destination") == "/backups":
+                return m
+        raise Invalid("Der Helfer findet seine eigene Ablage /backups nicht.")
+
+    def restore(self, run: str, kinds: list) -> dict:
+        """Put the archives of a run back, for the kinds asked: first a backup
+        of how things are now, then for each: stop, unpack, start, wait.
+        Lucent last. A tool's pairing comes back as it was in the archive;
+        Lucent pairs the tools again afterwards."""
+        b = self.backups
+        if b is None or not b.available():
+            raise Invalid("Keine Ablage für Sicherungen.")
+        if not isinstance(kinds, list) or not kinds or not all(isinstance(k, str) for k in kinds):
+            raise Invalid("Wähle, was wiederhergestellt wird.")
+        order = [k for k in (*TOOLS, "lucent") if k in kinds]
+        if len(order) != len(set(kinds)):
+            raise Invalid("Unbekanntes Tool in der Auswahl.")
+        for k in order:
+            if b.archive(run, k) is None:
+                raise Invalid(f"In dieser Sicherung gibt es nichts von `{k}`.")
+            if self.docker.inspect(settings.container(k)) is None:
+                raise Invalid(f"`{k}` ist nicht angelegt; erst hinzufügen, dann wiederherstellen.")
+        self._backups_mount()
+        with self._lock:
+            busy = [k for k in order if (self.jobs.get(k) or {}).get("step") in BUSY]
+            if busy:
+                raise Invalid(f"Gerade beschäftigt: {', '.join(busy)}.")
+            for k in order:
+                self.jobs[k] = {"step": "backup", "error": None, "since": _now(), "kind": "restore", "run": run}
+        self._spawn(self._restore_all, run, order)
+        return {"kinds": order}
+
+    def _restore_all(self, run: str, order: list[str]) -> None:
+        try:
+            ids = {k: self.docker.inspect(settings.container(k))["Id"] for k in order}
+            r = self.backups.run(ids, f"vor dem Wiederherstellen von {run}")
+            if not r["ok"]:
+                raise DockerError(500, f"Die Sicherung vorher schlug fehl: {r['failed']}")
+        except Exception as e:                       # nothing touched yet: all stop here
+            for k in order:
+                self._step(k, "error", str(e))
+            return
+        for k in order:
+            self._restore_one(run, k)
+
+    def _restore_one(self, run: str, kind: str) -> None:
+        from .backup import RESTORE
+        name = settings.container(kind)
+        try:
+            c = self.docker.inspect(name)
+            self._step(kind, "restore")
+            self.docker.stop(c["Id"])
+            image = settings.own_image(kind, "current")
+            if self.docker.image_info(image) is None:
+                image = c["Image"]
+            body = templates.restore_body(kind, image, self._backups_mount(), run, RESTORE)
+            oid = self.docker.create(f"{settings.prefix}{kind}-restore", body)
+            try:
+                self.docker.start(oid)
+                code = self.docker.wait(oid)
+                if code != 0:
+                    tail = self.docker.logs(oid).strip().splitlines()
+                    raise DockerError(500, "Entpacken: " + (tail[-1] if tail else f"Code {code}"))
+            finally:
+                self.docker.remove(oid)
+            self._step(kind, "start")
+            self.docker.start(c["Id"])
+            self._wait_ready(c["Id"])
+            self._step(kind, "ready")
+            log.info("%s wiederhergestellt aus %s", kind, run)
+        except Exception as e:
+            log.warning("Wiederherstellen %s: %s", kind, e)
+            try:                                     # whatever happened, it should run again
+                self.docker.start(self.docker.inspect(name)["Id"])
+            except Exception:
+                pass
+            self._step(kind, "error", str(e))
+
     def tick(self, now: datetime) -> None:
         """Called every half minute: the daily backup, when it is due."""
         if self.backups is not None and self.backups.due(now):
