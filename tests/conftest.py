@@ -22,7 +22,9 @@ TOKEN = "t" * 40
 class FakeDocker:
     def __init__(self):
         # name -> image id; a rebuild is a new id under the same name
-        self.images = {n: f"sha256:{i:064x}" for i, n in enumerate(("lucent:aio", "arca:aio", "fila:aio", "strata:aio"), 1)}
+        self.images = {n: f"sha256:{i:064x}" for i, n in
+                       enumerate(("lucent:aio", "arca:aio", "fila:aio", "strata:aio", "aperture:aio"), 1)}
+        self.oneoff_code, self.oneoffs = 0, []
         self.containers: dict[str, dict] = {}      # id -> inspect
         self.networks: dict[str, dict] = {}
         self.pulled, self.execs, self.calls = [], [], []
@@ -99,6 +101,13 @@ class FakeDocker:
         if mm := re.fullmatch(r"/volumes/(.+)", path):
             self.volumes_removed.append(unquote(mm[1]))
             return httpx.Response(204)
+        if mm := re.fullmatch(r"/containers/([^/]+)/(wait|logs)", path):
+            c = self.find(mm[1])
+            if mm[2] == "wait":
+                self.oneoffs.append(c["body"])
+                return httpx.Response(200, json={"StatusCode": self.oneoff_code})
+            msg = b"ValueError: an Aperture password needs at least 8 characters\n"
+            return httpx.Response(200, content=struct.pack(">BxxxI", 2, len(msg)) + msg)
         if mm := re.fullmatch(r"/containers/([^/]+)/(json|start|stop|exec|restart)", path):
             c = self.find(mm[1])
             if c is None:
@@ -153,7 +162,8 @@ class InlineStack(Stack):
 def fake(tmp_path):
     config.configure(data_dir=tmp_path, self_id="",
                      image_overrides={"lucent": "lucent:aio", "arca": "arca:aio", "fila": "fila:aio",
-                                      "strata": "strata:aio"})
+                                      "strata": "strata:aio", "aperture": "aperture:aio"},
+                     allowed_paths=["/srv/fotos"])
     return FakeDocker()
 
 

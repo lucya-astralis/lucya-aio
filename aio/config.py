@@ -16,6 +16,17 @@ def _env(name: str, default: str = "") -> str:
     return os.environ.get(name, default).strip()
 
 
+def _paths(spec: str) -> list[str]:
+    """LUCYA_ALLOWED_PATHS=/srv/fotos,/mnt/nas/bilder: the only host folders a
+    container may get (Aperture's photos), set with `docker run`."""
+    import posixpath
+    out = []
+    for part in filter(None, (p.strip() for p in spec.split(","))):
+        if part.startswith("/"):
+            out.append(posixpath.normpath(part))
+    return out
+
+
 def _images(spec: str) -> dict[str, str]:
     """LUCYA_IMAGES=lucent=lucent:aio,arca=arca:aio: images built on this
     machine instead of the registry's (development)."""
@@ -40,6 +51,7 @@ class Settings:
     registry: str = field(default_factory=lambda: _env("LUCYA_REGISTRY", "ghcr.io/lucya-astralis/"))
     channel: str = field(default_factory=lambda: _env("LUCYA_CHANNEL", "stable"))
     image_overrides: dict = field(default_factory=lambda: _images(_env("LUCYA_IMAGES")))
+    allowed_paths: list = field(default_factory=lambda: _paths(_env("LUCYA_ALLOWED_PATHS")))
     tz: str = field(default_factory=lambda: _env("TZ", "Europe/Berlin"))
     # where backups go: what `docker run -v …:/backups` mounted
     backups: Path = field(default_factory=lambda: Path(_env("LUCYA_BACKUPS", "/backups")))

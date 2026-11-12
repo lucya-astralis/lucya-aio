@@ -128,7 +128,7 @@ def test_state_shows_every_tool_and_its_step(fake, api):
     api.put("/tools/strata", json={"port": 8086, "ui_url": "http://x.test:8086"})
     s = api.get("/state").json()
     by = {t["kind"]: t for t in s["tools"]}
-    assert set(by) == {"arca", "fila", "strata"}
+    assert set(by) == {"arca", "fila", "strata", "aperture"}
     assert by["arca"]["state"] == "absent" and by["arca"]["default_port"] == 8070
     assert by["strata"]["state"] == "running" and by["strata"]["job"]["step"] == "ready"
     assert by["strata"]["base_url"] == "http://strata:8086" and 8086 in s["ports_in_use"]
@@ -414,3 +414,90 @@ def test_boot_names_the_images_of_containers_made_before(fake, stack, api):
     del fake.images["lucya-images/fila:current"]
     stack.boot(TOKEN, "X")
     assert fake.images["lucya-images/fila:current"] == tool(fake, "fila")["Image"]
+
+
+# ---- Aperture: photos from a host folder, two ports, a password first -------------------------
+APERTURE = {"port": 8090, "gallery_port": 8000, "ui_url": "http://x.test:8090", "photos": "/srv/fotos/2026"}
+
+
+def test_aperture_gets_its_photos_two_ports_and_a_check(fake, api):
+    assert api.put("/tools/aperture", json=APERTURE).status_code == 202
+    body = tool(fake, "aperture")["body"]
+    hc = body["HostConfig"]
+    binds = [m for m in hc["Mounts"] if m["Type"] == "bind"]
+    assert binds == [{"Type": "bind", "Source": "/srv/fotos/2026", "Target": "/photos"}]
+    assert sorted(m["Source"] for m in hc["Mounts"] if m["Type"] == "volume") == [
+        "lucya-aperture-data", "lucya-aperture-previews", "lucya-aperture-thumbnails"]
+    assert hc["PortBindings"] == {"8090/tcp": [{"HostIp": "0.0.0.0", "HostPort": "8090"}],
+                                  "8000/tcp": [{"HostIp": "0.0.0.0", "HostPort": "8000"}]}
+    assert "APERTURE_ALLOW_OPEN=0" in body["Env"] and hc["ReadonlyRootfs"] and hc["CapDrop"] == ["ALL"]
+    assert "/api/health" in " ".join(body["Healthcheck"]["Test"])
+
+
+@pytest.mark.parametrize("photos, word", [
+    ("/etc", "nicht freigegeben"), ("/srv/fotosX", "nicht freigegeben"), ("/srv/fotos/../../etc", "absoluter"),
+    ("fotos", "absoluter"), ("", "absoluter")])
+def test_only_released_folders_for_photos(fake, api, photos, word):
+    r = api.put("/tools/aperture", json={**APERTURE, "photos": photos})
+    assert r.status_code == 422 and word in r.json()["detail"] and not fake.containers
+
+
+def test_no_folders_released_no_aperture(fake, api):
+    from aio.config import settings
+    settings.allowed_paths = []
+    r = api.put("/tools/aperture", json=APERTURE)
+    assert r.status_code == 422 and "LUCYA_ALLOWED_PATHS" in r.json()["detail"]
+
+
+def test_the_gallery_port_counts_against_other_tools(fake, api):
+    api.put("/tools/aperture", json=APERTURE)
+    r = api.put("/tools/arca", json={"port": 8000, "ui_url": "http://x.test"})
+    assert r.status_code == 422 and "aperture" in r.json()["detail"]
+    assert api.put("/tools/aperture", json={**APERTURE, "gallery_port": 8090}).status_code == 422
+
+
+def test_a_password_is_set_once_before_the_first_start(fake, api, tmp_path):
+    api.put("/tools/aperture", json=APERTURE)
+    assert len(fake.oneoffs) == 1
+    one = fake.oneoffs[0]
+    assert one["HostConfig"]["NetworkMode"] == "none" and one["HostConfig"]["Mounts"][0]["Target"] == "/data"
+    assert "set_password" in one["Cmd"][2]
+    assert [c["Name"] for c in fake.containers.values()] == ["/lucya-aperture"]      # the one-off is gone
+    pw = api.get("/tools/aperture/password").json()["password"]
+    assert f"APERTURE_PASSWORD={pw}" in one["Env"] and len(pw) >= 20
+    assert (tmp_path / "passwords.json").stat().st_mode & 0o777 == 0o600
+    api.put("/tools/aperture", json={**APERTURE, "port": 18090, "ui_url": "http://x.test:18090"})
+    assert len(fake.oneoffs) == 1                                       # not again
+
+
+def test_a_failed_password_keeps_aperture_from_starting(fake, api):
+    fake.oneoff_code = 1
+    api.put("/tools/aperture", json=APERTURE)
+    job = next(t for t in api.get("/state").json()["tools"] if t["kind"] == "aperture")["job"]
+    assert job["step"] == "error" and "8 characters" in job["error"]
+    assert not [c for c in fake.containers.values() if c["Name"] == "/lucya-aperture"]
+    assert api.get("/tools/aperture/password").status_code == 422
+
+
+def test_aperture_joins_and_leaves_with_its_own_cli(fake, api):
+    api.put("/tools/aperture", json=APERTURE)
+    api.post("/tools/aperture/join", json={"code": "ABCD-EFGH-JKLM", "again": True})
+    argvs = [argv for _, argv in fake.execs]
+    assert argvs[-2] == ["python", "-m", "aperture.cli", "lucent", "leave"]
+    assert argvs[-1] == ["python", "-m", "aperture.cli", "lucent", "join", "http://lucent:8060", "ABCD-EFGH-JKLM",
+                         "--ui-url", "http://x.test:8090", "--base-url", "http://aperture:8090"]
+
+
+def test_removing_aperture_with_its_data_takes_all_three_volumes_and_the_password(fake, api):
+    api.put("/tools/aperture", json=APERTURE)
+    api.delete("/tools/aperture", params={"data": "delete"})
+    assert sorted(fake.volumes_removed) == ["lucya-aperture-data", "lucya-aperture-previews",
+                                            "lucya-aperture-thumbnails"]
+    assert api.get("/tools/aperture/password").status_code == 422
+
+
+def test_state_says_which_folders_are_released(fake, api):
+    s = api.get("/state").json()
+    assert s["allowed_paths"] == ["/srv/fotos"]
+    ap = next(t for t in s["tools"] if t["kind"] == "aperture")
+    assert ap["default_port"] == 8090 and ap["default_gallery_port"] == 8000

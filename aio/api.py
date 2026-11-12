@@ -78,6 +78,10 @@ def create_app(stack: Stack, token: str) -> FastAPI:
             raise Invalid("Keine Ablage für Sicherungen: der Helfer braucht -v …:/backups.")
         return stack.backups.set_schedule(enabled, at, keep)
 
+    @app.get("/tools/aperture/password", dependencies=[Depends(authorized)])
+    def aperture_password():
+        return stack.aperture_password()
+
     @app.post("/tools/{kind}/restart", dependencies=[Depends(authorized)])
     def restart(kind: str):
         return stack.restart(kind)

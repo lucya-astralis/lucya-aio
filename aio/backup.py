@@ -3,11 +3,12 @@
 """Backups: one folder per run under /backups, one tar.gz per container.
 
 The copy is made inside each container, as its own user (only it may read
-its keys): every SQLite file at the top of /data is copied with VACUUM
-INTO, so a database in WAL mode comes out whole while the tool runs, and
-the archive goes to stdout, which the helper writes to disk. The archive
-holds /data as it should be restored: the copies under their own names,
-everything else as it is, no -wal or -shm files.
+its keys): every SQLite file anywhere in /data, known by its header, not
+its name (Aperture keeps one as console/lucent_outbox.sqlite), is copied
+with VACUUM INTO, so a database in WAL mode comes out whole while the tool
+runs, and the archive goes to stdout, which the helper writes to disk. The
+archive holds /data as it should be restored: the copies under their own
+names, everything else as it is, none of their -wal, -shm or -journal.
 
 /backups is whatever was mounted there with `docker run` (a named volume
 or a host folder). Without it there are no backups, and the state says so.
@@ -28,35 +29,45 @@ log = logging.getLogger("aio")
 
 # runs inside a tool's container: python -c SNAPSHOT /data
 SNAPSHOT = r"""
-import os, sqlite3, sys, tarfile
+import os, shutil, sqlite3, sys, tarfile
 src = sys.argv[1]
 tmp = os.path.join(src, ".lucya-backup")
-os.makedirs(tmp, exist_ok=True)
-copies = {}
-for name in sorted(os.listdir(src)):
-    if name.endswith(".db") and os.path.isfile(os.path.join(src, name)):
-        dst = os.path.join(tmp, name)
-        if os.path.exists(dst):
-            os.remove(dst)
-        c = sqlite3.connect(os.path.join(src, name))
+shutil.rmtree(tmp, ignore_errors=True)
+os.makedirs(tmp)
+def is_sqlite(path):
+    try:
+        with open(path, "rb") as f:
+            return f.read(16) == b"SQLite format 3\x00"
+    except OSError:
+        return False
+copies, beside = {}, set()
+for root, dirs, files in os.walk(src):
+    dirs[:] = [d for d in dirs if os.path.join(root, d) != tmp]
+    for f in files:
+        full = os.path.join(root, f)
+        if not is_sqlite(full):
+            continue
+        rel = os.path.relpath(full, src)
+        dst = os.path.join(tmp, rel)
+        os.makedirs(os.path.dirname(dst), exist_ok=True)
+        c = sqlite3.connect(full)
         c.execute("VACUUM INTO ?", (dst,))
         c.close()
-        copies[name] = dst
+        copies[rel] = dst
+        beside |= {rel + s for s in ("-wal", "-shm", "-journal")}
 with tarfile.open(fileobj=sys.stdout.buffer, mode="w|gz") as tar:
     for root, dirs, files in os.walk(src):
         dirs[:] = [d for d in dirs if os.path.join(root, d) != tmp]
         for f in files:
             full = os.path.join(root, f)
             rel = os.path.relpath(full, src)
-            if f.endswith((".db-wal", ".db-shm")) or rel in copies:
+            if rel in copies or rel in beside:
                 continue
             tar.add(full, arcname=rel)
-    for name, dst in copies.items():
-        tar.add(dst, arcname=name)
-for dst in copies.values():
-    os.remove(dst)
-os.rmdir(tmp)
-print(" ".join(copies) or "-", file=sys.stderr)
+    for rel, dst in copies.items():
+        tar.add(dst, arcname=rel)
+shutil.rmtree(tmp, ignore_errors=True)
+print(" ".join(sorted(copies)) or "-", file=sys.stderr)
 """
 
 def snapshot_argv() -> list[str]:

@@ -10,6 +10,7 @@ docker run -d --name lucya-aio --restart always \
   -v /var/run/docker.sock:/var/run/docker.sock \
   -v lucya-aio-data:/data \
   -v lucya-backups:/backups \
+  -e LUCYA_ALLOWED_PATHS=/srv/fotos \
   ghcr.io/lucya-astralis/lucya-aio:stable
 docker logs lucya-aio      # Adresse und Einrichtungscode
 ```
@@ -29,13 +30,15 @@ Wer den Docker-Socket hat, ist root auf dem Rechner. Das gilt auch für
 diesen Helfer, deshalb läuft er offen als root. Begrenzt ist, was seine API
 annimmt ([aio/templates.py](aio/templates.py)):
 
-- nur die Tools aus `TOOLS` (heute arca, Fila, strata), nur ihr Image
+- nur die Tools aus `TOOLS` (arca, Fila, strata, Aperture), nur ihr Image
   (`ghcr.io/lucya-astralis/<tool>:<kanal>`);
 - von Lucent kommen nur Werte: Host-Port, Bind-Adresse, UI-Adresse, beim
   Koppeln Code und Rolle. Alles wird geprüft;
 - jeder Container ohne Capabilities, `no-new-privileges`, Dateisystem nur
-  lesbar, ein benanntes Volume für die Daten, nie `privileged`, nie das
-  Host-Netz, keine Host-Ordner;
+  lesbar, benannte Volumes für die Daten, nie `privileged`, nie das
+  Host-Netz;
+- ein Host-Ordner nur für Aperture (die Fotos), und nur einer aus
+  `LUCYA_ALLOWED_PATHS` oder darunter, beim `docker run` gesetzt;
 - `exec` nur für den Join- und den Leave-Befehl des Tools;
 - er sieht und berührt nur Container mit dem Label `systems.lucya.aio`.
 
@@ -58,6 +61,27 @@ Anlegen als `LUCENT_AIO_TOKEN` mitgibt.
 | `POST /backup` | sichert alle laufenden Container |
 | `PUT /backup/schedule` | `{enabled, time: "HH:MM", keep}`: tägliche Sicherung, wie viele bleiben |
 
+## Aperture
+
+Aperture bekommt zwei Ports (Aperture selbst, Vorgabe 8090, und die
+öffentliche Galerie, Vorgabe 8000), die Fotos aus einem freigegebenen
+Host-Ordner (lesend und schreibend: Alben und Galerie haben ihre
+Einstellungen als Dateien neben den Fotos) und Volumes für Daten,
+Vorschaubilder und Thumbnails. Der Ordner muss dem Benutzer 10001 gehören
+(`sudo chown -R 10001:10001 /srv/fotos`), sonst kann Aperture keine
+Einstellungen schreiben.
+
+Ohne Passwort startet Aperture auf einer Netzadresse nicht, und ohne
+Passwort wäre es offen. Vor dem ersten Start setzt der Helfer deshalb ein
+zufälliges Passwort (ein kurzer Container ohne Netz, auf Aperture's
+Daten-Volume) und behält es in `/data/passwords.json`. Angemeldet wird
+über Lucent; das Passwort ist der Weg hinein, wenn Lucent nicht da ist.
+Lucent zeigt es Admins auf Nachfrage (`GET /tools/aperture/password`).
+
+Gesichert wird Apertures `/data` (Index, Kopplung, Passwort). Die Fotos und
+die Einstellungen daneben liegen im Host-Ordner und gehören in dessen
+eigene Sicherung.
+
 ## Updates
 
 Jedes Image, aus dem der Helfer einen Container macht, bekommt einen
@@ -74,9 +98,10 @@ statt ohne Rückweg zu tauschen.
 Unter `/backups` (was beim `docker run` dort eingehängt ist: ein benanntes
 Volume oder ein Ordner, `-v /srv/backup:/backups`) liegt je Lauf ein Ordner
 mit einem `<tool>.tar.gz` je Container und `backup.json`. Die Kopie
-entsteht im Container selbst, als sein Benutzer: jede SQLite-Datei oben in
-`/data` per `VACUUM INTO`, also vollständig auch im WAL-Modus und im
-laufenden Betrieb, alles andere (Schlüssel, Kopplung) wie es ist. Ein
+entsteht im Container selbst, als sein Benutzer: jede SQLite-Datei in
+`/data`, erkannt am Dateikopf, nicht am Namen, per `VACUUM INTO`, also
+vollständig auch im WAL-Modus und im laufenden Betrieb, alles andere
+(Schlüssel, Kopplung) wie es ist. Ein
 Archiv ist `/data`, so wie es zurück soll:
 
 ```bash

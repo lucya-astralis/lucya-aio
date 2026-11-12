@@ -114,13 +114,15 @@ class Stack:
         for kind, t in TOOLS.items():
             entry = found.get(kind) or {"kind": kind, "container": None, "state": "absent", "config": None}
             entry.update(name=t.name, default_port=t.port, base_url=t.base_url, job=jobs.get(kind))
+            if kind == "aperture":
+                entry["default_gallery_port"] = t.gallery
             tools.append(entry)
-        used = sorted({v["config"]["port"] for v in found.values() if v.get("config", {}).get("port")})
+        used = sorted(set().union(*(templates.ports_of(v.get("config") or {}) for v in found.values())))
         lucent = found.get("lucent")
         if lucent is not None:
             lucent["job"] = jobs.get("lucent")
         return {"lucent": lucent, "tools": tools, "ports_in_use": used, "checking": self.checking,
-                "backup": self.backup_state()}
+                "backup": self.backup_state(), "allowed_paths": settings.allowed_paths}
 
     def _versions(self, kind: str, running_id: str) -> dict:
         """The image a container runs and the one its tag points to now; an
@@ -148,8 +150,9 @@ class Stack:
         values = templates.clean(kind, body)
         for other in self.docker.managed(LABEL):
             okind = (other.get("Labels") or {}).get(f"{LABEL}.kind")
-            if okind != kind and templates.config_of(other).get("port") == values["port"]:
-                raise Invalid(f"Port {values['port']} hat schon {okind}.")
+            clash = templates.ports_of(templates.config_of(other)) & templates.ports_of(values)
+            if okind != kind and clash:
+                raise Invalid(f"Port {min(clash)} hat schon {okind}.")
         with self._lock:
             job = self.jobs.get(kind)
             if job and job["step"] in BUSY:
@@ -178,6 +181,8 @@ class Stack:
                     self._step(kind, "ready")
                     return
                 self.docker.remove(old["Id"])           # the volume stays
+            if kind == "aperture":
+                self._aperture_password()
             cid = self.docker.create(name, templates.tool_body(kind, values))
             self._hold(kind, cid)
             self._step(kind, "start")
@@ -190,6 +195,31 @@ class Stack:
         except Exception as e:                       # a job must never die silently
             log.exception("%s", kind)
             self._step(kind, "error", f"Unerwarteter Fehler: {e}")
+
+    def _aperture_password(self) -> None:
+        """Once, before Aperture's first start: an operator password, set by
+        a one-off container, kept in the helper's volume (passwords.json)."""
+        from . import secrets as _secrets
+        if _secrets.tool_password("aperture"):
+            return
+        password = _secrets.new_password()
+        cid = self.docker.create(f"{settings.prefix}aperture-password", templates.aperture_password_body(password))
+        try:
+            self.docker.start(cid)
+            code = self.docker.wait(cid)
+            if code != 0:
+                tail = self.docker.logs(cid).strip().splitlines()
+                raise DockerError(500, "Aperture-Passwort: " + (tail[-1] if tail else f"Code {code}"))
+        finally:
+            self.docker.remove(cid)
+        _secrets.keep_tool_password("aperture", password)
+
+    def aperture_password(self) -> dict:
+        from . import secrets as _secrets
+        pw = _secrets.tool_password("aperture")
+        if not pw:
+            raise Invalid("Aperture hat noch kein Passwort vom Helfer.")
+        return {"password": pw}
 
     def _wait_ready(self, cid: str) -> None:
         end = self._clock() + READY_TIMEOUT
@@ -397,7 +427,11 @@ class Stack:
             self.jobs.pop(kind, None)
         self.docker.remove(c["Id"])
         if data == "delete":
-            self.docker.remove_volume(settings.volume(kind))
+            for what in (("data", "thumbnails", "previews") if kind == "aperture" else ("data",)):
+                self.docker.remove_volume(settings.volume(kind, what))
+            if kind == "aperture":                   # its password went with its data
+                from . import secrets as _secrets
+                _secrets.forget_tool_password(kind)
         log.info("%s entfernt (Daten %s)", kind, "gelöscht" if data == "delete" else "behalten")
         return {"ok": True, "data": data}
 

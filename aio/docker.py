@@ -97,6 +97,14 @@ class Docker:
     def remove(self, cid: str) -> None:
         self._call("DELETE", f"/containers/{cid}", params={"force": "1"}, ok=(204, 404))
 
+    def wait(self, cid: str) -> int:
+        """Until the container ends; its exit code."""
+        return self._call("POST", f"/containers/{cid}/wait").json().get("StatusCode", -1)
+
+    def logs(self, cid: str) -> str:
+        raw = self._call("GET", f"/containers/{cid}/logs", params={"stdout": "1", "stderr": "1"}).content
+        return demux(raw)
+
     def restart(self, cid: str) -> None:
         self._call("POST", f"/containers/{cid}/restart", params={"t": "20"}, ok=(204,))
 
