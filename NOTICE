@@ -1,0 +1,42 @@
+lucya-aio — part of lucya.systems
+Copyright © 2026 lucya.systems — https://lucya.systems
+
+Original author: lucya.systems (https://lucya.systems).
+
+lucya-aio is free software: you can redistribute it and/or modify it under
+the terms of the GNU Affero General Public License as published by the Free
+Software Foundation, either version 3 of the License, or (at your option) any
+later version, together with the additional terms below (section 7 of that
+licence). The full text is in LICENSE.
+
+If you run a modified version for users over a network, section 13 of the
+licence applies: those users must be offered its complete source code.
+
+Additional terms (AGPL-3.0, section 7)
+---------------------------------------
+1. Attribution (section 7(b)). Every copy and every modified version must
+   keep the author attribution "lucya.systems" together with a link to
+   https://lucya.systems
+     a) in this NOTICE file and in the copyright notices of the source files,
+        and
+     b) in the Appropriate Legal Notices the program shows its users (the
+        credit in the footer and on the about page), where it shows any.
+   A modified version may add its own name beside the attribution, not put
+   it in its place.
+
+2. Modified versions (section 7(c)). A modified version must say that it is
+   one, for example "based on lucya-aio by lucya.systems", and must not be
+   presented as the original.
+
+3. Names and marks (section 7(e)). This licence grants no rights to the
+   names lucya.systems, Lucent, Aperture, arca, Facet, Nebula and Nova, or to
+   their logos. See TRADEMARKS.md.
+
+Third-party components
+----------------------
+These are not lucya.systems' work and keep their own licences:
+
+  * JetBrains Mono — SIL Open Font License 1.1 (see the OFL.txt next to the font files)
+  * Space Grotesk — SIL Open Font License 1.1 (see the OFL.txt next to the font files)
+  * Font Awesome Free (subset), Fonticons, Inc. — icons CC BY 4.0, font SIL OFL 1.1 (see FONTAWESOME-LICENSE.txt)
+  * Facet (f/facet.css, f/facet.js or facet.css / facet.js), lucya.systems — Mozilla Public License 2.0
