@@ -24,6 +24,7 @@ class FakeDocker:
         self.containers: dict[str, dict] = {}      # id -> inspect
         self.networks: dict[str, dict] = {}
         self.pulled, self.execs, self.calls = [], [], []
+        self.volumes_removed, self.restarted = [], []
         self.health = "healthy"
         self.exec_result = (0, b"paired\n")
         self.start_error = None
@@ -64,7 +65,10 @@ class FakeDocker:
                                     "Config": {"Image": body["Image"], "Labels": body["Labels"]},
                                     "State": {"Running": False, "ExitCode": 0}}
             return httpx.Response(201, json={"Id": cid})
-        if mm := re.fullmatch(r"/containers/([^/]+)/(json|start|stop|exec)", path):
+        if mm := re.fullmatch(r"/volumes/(.+)", path):
+            self.volumes_removed.append(unquote(mm[1]))
+            return httpx.Response(204)
+        if mm := re.fullmatch(r"/containers/([^/]+)/(json|start|stop|exec|restart)", path):
             c = self.find(mm[1])
             if c is None:
                 return httpx.Response(404, json={"message": "no such container"})
@@ -74,6 +78,9 @@ class FakeDocker:
                 if self.start_error:
                     return httpx.Response(500, json={"message": self.start_error})
                 c["State"] = {"Running": True, "Health": {"Status": self.health}}
+                return httpx.Response(204)
+            if mm[2] == "restart":
+                self.restarted.append(c["Id"])
                 return httpx.Response(204)
             if mm[2] == "stop":
                 c["State"] = {"Running": False, "ExitCode": 0}

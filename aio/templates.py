@@ -42,6 +42,11 @@ class Tool:
         return ["python", "-m", self.kind, "--lucent-join", LUCENT_INTERNAL, code,
                 "--ui-url", ui_url, "--base-url", self.base_url, "--role", role]
 
+    def leave_argv(self) -> list[str]:
+        """Forget the old pairing, before pairing again: Fila and strata
+        refuse a join while they hold one, arca overwrites it."""
+        return ["python", "-m", self.kind, "--lucent-leave"]
+
     @property
     def base_url(self) -> str:
         return f"http://{self.kind}:{self.port}"
@@ -82,14 +87,17 @@ def clean_url(value) -> str:
     return value
 
 
-def clean_join(body: dict) -> tuple[str, str]:
+def clean_join(body: dict) -> tuple[str, str, bool]:
     code = str(body.get("code", "")).strip()
     if not _CODE.match(code):
         raise Invalid("Das ist kein Kopplungscode (XXXX-XXXX-XXXX).")
     role = body.get("role", "editor")
     if role not in ROLES:
         raise Invalid("Die Rolle ist reader, editor oder admin.")
-    return code, role
+    again = body.get("again", False)
+    if not isinstance(again, bool):
+        raise Invalid("again ist true oder false.")
+    return code, role, again
 
 
 def _forwarded(bind: str) -> str:

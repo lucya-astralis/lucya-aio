@@ -84,6 +84,12 @@ class Docker:
     def remove(self, cid: str) -> None:
         self._call("DELETE", f"/containers/{cid}", params={"force": "1"}, ok=(204, 404))
 
+    def restart(self, cid: str) -> None:
+        self._call("POST", f"/containers/{cid}/restart", params={"t": "20"}, ok=(204,))
+
+    def remove_volume(self, name: str) -> None:
+        self._call("DELETE", f"/volumes/{quote(name, safe='')}", ok=(204, 404))
+
     # ---- networks ---------------------------------------------------------------
     def ensure_network(self, name: str, *, internal: bool, labels: dict) -> None:
         try:

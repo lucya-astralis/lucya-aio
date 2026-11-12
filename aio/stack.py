@@ -144,16 +144,51 @@ class Stack:
             self._sleep(1)
         raise TimeoutError(f"Nach {int(READY_TIMEOUT)} s noch nicht bereit.")
 
+    # ---- running and removing ------------------------------------------------------
+    def _running(self, kind: str) -> dict:
+        if kind not in TOOLS:
+            raise Invalid(f"Unbekanntes Tool `{kind}`.")
+        c = self.docker.inspect(settings.container(kind))
+        if c is None:
+            raise Invalid(f"{TOOLS[kind].name} ist nicht angelegt.")
+        return c
+
+    def restart(self, kind: str) -> dict:
+        c = self._running(kind)
+        self.docker.restart(c["Id"])
+        return {"ok": True}
+
+    def remove(self, kind: str, data: str) -> dict:
+        """The container goes; its volume only when asked (data=delete)."""
+        if data not in ("keep", "delete"):
+            raise Invalid("data ist keep oder delete.")
+        c = self._running(kind)
+        with self._lock:
+            job = self.jobs.get(kind)
+            if job and job["step"] not in ("ready", "error"):
+                raise Invalid(f"{TOOLS[kind].name} wird gerade eingerichtet.")
+            self.jobs.pop(kind, None)
+        self.docker.remove(c["Id"])
+        if data == "delete":
+            self.docker.remove_volume(settings.volume(kind))
+        log.info("%s entfernt (Daten %s)", kind, "gelöscht" if data == "delete" else "behalten")
+        return {"ok": True, "data": data}
+
     # ---- pairing ----------------------------------------------------------------------
     def join(self, kind: str, body: dict) -> dict:
         if kind not in TOOLS:
             raise Invalid(f"Unbekanntes Tool `{kind}`.")
-        code, role = templates.clean_join(body)
+        code, role, again = templates.clean_join(body)
         c = self.docker.inspect(settings.container(kind))
         if c is None or not c["State"]["Running"]:
             raise Invalid(f"{TOOLS[kind].name} läuft nicht.")
         ui_url = templates.config_of(c["Config"]).get("ui_url")
         if not ui_url:
             raise Invalid(f"{TOOLS[kind].name} hat keine UI-Adresse.")
+        before = ""
+        if again:                                   # pairing again: the old one goes first
+            left, before = self.docker.exec(c["Id"], TOOLS[kind].leave_argv())
+            if left != 0:
+                return {"ok": False, "exit_code": left, "output": before[-2000:]}
         code_, output = self.docker.exec(c["Id"], TOOLS[kind].join_argv(code, ui_url, role))
-        return {"ok": code_ == 0, "exit_code": code_, "output": output[-2000:]}
+        return {"ok": code_ == 0, "exit_code": code_, "output": (before + output)[-2000:]}

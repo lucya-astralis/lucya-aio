@@ -47,6 +47,14 @@ def create_app(stack: Stack, token: str) -> FastAPI:
     async def join(kind: str, request: Request):
         return stack.join(kind, await _body(request))
 
+    @app.post("/tools/{kind}/restart", dependencies=[Depends(authorized)])
+    def restart(kind: str):
+        return stack.restart(kind)
+
+    @app.delete("/tools/{kind}", dependencies=[Depends(authorized)])
+    def remove(kind: str, data: str = "keep"):
+        return stack.remove(kind, data)
+
     return app
 
 

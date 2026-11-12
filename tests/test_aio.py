@@ -192,6 +192,20 @@ def test_join_takes_no_arguments_of_its_own(fake, api, body):
     assert not fake.execs
 
 
+def test_join_again_forgets_the_old_pairing_first(fake, api):
+    api.put("/tools/fila", json={"port": 8085, "ui_url": "http://x.test"})
+    r = api.post("/tools/fila/join", json={"code": "ABCD-EFGH-JKLM", "again": True})
+    assert r.json()["ok"]
+    assert [argv[3] for _, argv in fake.execs] == ["--lucent-leave", "--lucent-join"]
+    assert api.post("/tools/fila/join", json={"code": "ABCD-EFGH-JKLM", "again": "yes"}).status_code == 422
+
+
+def test_a_first_join_leaves_nothing(fake, api):
+    api.put("/tools/fila", json={"port": 8085, "ui_url": "http://x.test"})
+    api.post("/tools/fila/join", json={"code": "ABCD-EFGH-JKLM"})
+    assert [argv[3] for _, argv in fake.execs] == ["--lucent-join"]
+
+
 def test_join_needs_a_running_tool(fake, api):
     assert api.post("/tools/arca/join", json={"code": "ABCD-EFGH-JKLM"}).status_code == 422
 
@@ -200,3 +214,29 @@ def test_demux_reads_docker_frames():
     raw = b"\x01\0\0\0\0\0\0\x03abc\x02\0\0\0\0\0\0\x02de"
     assert demux(raw) == "abcde"
     assert demux(b"plain text") == "plain text"
+
+
+# ---- restarting and removing ------------------------------------------------------------------
+def test_restart(fake, api):
+    api.put("/tools/arca", json={"port": 8070, "ui_url": "http://x.test"})
+    assert api.post("/tools/arca/restart").status_code == 200
+    assert fake.restarted == [tool(fake, "arca")["Id"]]
+    assert api.post("/tools/fila/restart").status_code == 422
+
+
+def test_remove_keeps_the_data_unless_asked(fake, api):
+    api.put("/tools/arca", json={"port": 8070, "ui_url": "http://x.test"})
+    assert api.delete("/tools/arca").json() == {"ok": True, "data": "keep"}
+    assert not fake.containers and fake.volumes_removed == []
+    s = {t["kind"]: t for t in api.get("/state").json()["tools"]}
+    assert s["arca"]["state"] == "absent" and s["arca"]["job"] is None
+    api.put("/tools/arca", json={"port": 8070, "ui_url": "http://x.test"})
+    assert api.delete("/tools/arca", params={"data": "delete"}).status_code == 200
+    assert fake.volumes_removed == ["lucya-arca-data"]
+
+
+def test_remove_refuses_odd_values_and_other_volumes(fake, api):
+    api.put("/tools/arca", json={"port": 8070, "ui_url": "http://x.test"})
+    assert api.delete("/tools/arca", params={"data": "all"}).status_code == 422
+    assert api.delete("/tools/lucent").status_code == 422          # Lucent is not a tool
+    assert fake.containers and not fake.volumes_removed

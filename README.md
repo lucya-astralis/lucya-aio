@@ -35,7 +35,7 @@ annimmt ([aio/templates.py](aio/templates.py)):
 - jeder Container ohne Capabilities, `no-new-privileges`, Dateisystem nur
   lesbar, ein benanntes Volume für die Daten, nie `privileged`, nie das
   Host-Netz, keine Host-Ordner;
-- `exec` nur für den Join-Befehl des Tools;
+- `exec` nur für den Join- und den Leave-Befehl des Tools;
 - er sieht und berührt nur Container mit dem Label `systems.lucya.aio`.
 
 Die API verlangt das Token aus `/data/aio.json`, das der Helfer Lucent beim
@@ -48,7 +48,9 @@ Anlegen als `LUCENT_AIO_TOKEN` mitgibt.
 | `GET /health` | ohne Token |
 | `GET /state` | Lucent, jedes Tool mit Zustand, Werten und Schritt des laufenden Auftrags, belegte Ports |
 | `PUT /tools/{kind}` | `{port, bind, ui_url}` → 202; legt im Hintergrund an oder neu an (`pull` → `create` → `start` → `ready`, oder `error`). Gleiche Werte ändern nichts, neue erzeugen den Container neu, das Volume bleibt |
-| `POST /tools/{kind}/join` | `{code, role}` → führt `python -m <tool> --lucent-join http://lucent:8060 CODE --ui-url … --base-url http://<tool>:<port> --role …` im Container aus |
+| `POST /tools/{kind}/join` | `{code, role, again}` → führt `python -m <tool> --lucent-join http://lucent:8060 CODE --ui-url … --base-url http://<tool>:<port> --role …` im Container aus; mit `again: true` vorher `--lucent-leave` (Fila und strata lehnen einen Join ab, solange sie gekoppelt sind) |
+| `POST /tools/{kind}/restart` | Container neu starten |
+| `DELETE /tools/{kind}?data=keep\|delete` | Container entfernen, das Volume nur mit `data=delete` |
 
 ## Einstellungen beim `docker run`
 
