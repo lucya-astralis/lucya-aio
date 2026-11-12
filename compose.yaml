@@ -1,0 +1,40 @@
+# lucya.systems on one host: only the helper is started here. It makes
+# Lucent and, on Lucent's asking, the tools; those are not part of this
+# project, so `docker compose down` stops the helper and leaves the stack
+# running.
+#
+#   cp .env.example .env        # at least LUCYA_ALLOWED_PATHS for Aperture
+#   docker compose up -d
+#   docker compose logs         # address and setup code
+#
+# Updates of the helper itself: docker compose pull && docker compose up -d
+
+services:
+  lucya-aio:
+    image: ghcr.io/lucya-astralis/lucya-aio:${LUCYA_AIO_TAG:-stable}
+    container_name: ${LUCYA_PREFIX:-lucya-}aio
+    restart: always
+    # the helper joins its own networks; no project network is needed
+    network_mode: bridge
+    volumes:
+      # whoever holds this is root on the host: see README, "Was er darf"
+      - /var/run/docker.sock:/var/run/docker.sock
+      - aio-data:/data
+      # a named volume, or a host folder: LUCYA_BACKUP_PATH=/srv/backup
+      - ${LUCYA_BACKUP_PATH:-backups}:/backups
+    environment:
+      LUCYA_PORT: ${LUCYA_PORT:-8060}
+      LUCYA_BIND: ${LUCYA_BIND:-0.0.0.0}
+      LUCYA_CHANNEL: ${LUCYA_CHANNEL:-stable}
+      LUCYA_ALLOWED_PATHS: ${LUCYA_ALLOWED_PATHS:-}
+      LUCYA_PREFIX: ${LUCYA_PREFIX:-lucya-}
+      LUCYA_NETWORK: ${LUCYA_NETWORK:-lucya}
+      LUCYA_CONTROL_NETWORK: ${LUCYA_CONTROL_NETWORK:-lucya-aio}
+      LUCYA_IMAGES: ${LUCYA_IMAGES:-}
+      TZ: ${TZ:-Europe/Berlin}
+
+volumes:
+  aio-data:
+    name: ${LUCYA_PREFIX:-lucya-}aio-data
+  backups:
+    name: ${LUCYA_PREFIX:-lucya-}backups

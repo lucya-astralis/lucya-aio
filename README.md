@@ -6,19 +6,33 @@ und bittet ihn über ein Netz, das nur die beiden teilen, Tools anzulegen und
 zu koppeln.
 
 ```bash
+curl -fsSLO https://raw.githubusercontent.com/lucya-astralis/lucya-aio/main/compose.yaml
+curl -fsSL -o .env https://raw.githubusercontent.com/lucya-astralis/lucya-aio/main/.env.example
+# .env anpassen: mindestens LUCYA_ALLOWED_PATHS (Fotos für Aperture)
+docker compose up -d
+docker compose logs        # Adresse und Einrichtungscode
+```
+
+Compose startet nur den Helfer. Lucent und die Tools legt er selbst an;
+sie gehören nicht zum Compose-Projekt, `docker compose down` hält also nur
+den Helfer an, der Stack läuft weiter. Den Helfer selbst aktualisiert
+`docker compose pull && docker compose up -d`.
+
+Ohne Compose geht dasselbe mit einem Befehl:
+
+```bash
 docker run -d --name lucya-aio --restart always \
   -v /var/run/docker.sock:/var/run/docker.sock \
-  -v lucya-aio-data:/data \
-  -v lucya-backups:/backups \
-  -e LUCYA_ALLOWED_PATHS=/srv/fotos \
+  -v lucya-aio-data:/data -v lucya-backups:/backups \
+  -e LUCYA_ALLOWED_PATHS=/srv/fotos -e LUCYA_CHANNEL=beta \
   ghcr.io/lucya-astralis/lucya-aio:stable
-docker logs lucya-aio      # Adresse und Einrichtungscode
 ```
 
 Die Images baut GitHub (`.github/workflows/image.yml` in jedem Repo):
 `main` → `:stable`, `beta/*` → `:beta`. Solange die Lucent-Anbindung der
 Tools nur auf ihren beta-Branches liegt, mit `-e LUCYA_CHANNEL=beta`
-starten; der Helfer selbst kommt als `lucya-aio:stable`.
+starten (in `.env.example` schon so); der Helfer selbst kommt als
+`lucya-aio:stable`.
 
 Beim Start legt er an, was fehlt:
 
