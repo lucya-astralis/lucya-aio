@@ -501,3 +501,20 @@ def test_state_says_which_folders_are_released(fake, api):
     assert s["allowed_paths"] == ["/srv/fotos"]
     ap = next(t for t in s["tools"] if t["kind"] == "aperture")
     assert ap["default_port"] == 8090 and ap["default_gallery_port"] == 8000
+
+
+def test_a_second_helper_on_the_host_is_not_seen(fake, stack, api):
+    """Another helper's containers (another prefix) are not this one's: not
+    in its state, not backed up, not named, not updated."""
+    fake.containers["other"] = {"Id": "other", "Name": "/test-arca", "Image": fake.images["arca:aio"],
+                                "body": {}, "State": {"Running": True},
+                                "Config": {"Image": "arca:aio", "Labels": {"systems.lucya.aio": "test-",
+                                                                          "systems.lucya.aio.kind": "arca"}}}
+    stack.boot(TOKEN, "X")
+    arca = next(t for t in api.get("/state").json()["tools"] if t["kind"] == "arca")
+    assert arca["state"] == "absent"
+    assert "other" not in stack.containers()
+    assert "lucya-images/arca:current" not in fake.images
+    assert api.put("/tools/arca", json={"port": 8070, "ui_url": "http://x.test"}).status_code == 202
+    assert fake.containers["other"]["State"]["Running"]           # untouched
+    assert tool(fake, "arca")["body"]["Labels"]["systems.lucya.aio"] == "lucya-"

@@ -64,7 +64,7 @@ class Stack:
     def boot(self, token: str, setup_code: str) -> None:
         """Networks, the helper on the control network, and Lucent."""
         self._lucent_env = (token, setup_code)
-        labels = {LABEL: "1"}
+        labels = {LABEL: settings.prefix}
         self.docker.ensure_network(settings.network, internal=False, labels=labels)
         self.docker.ensure_network(settings.control_network, internal=True, labels=labels)
         if settings.self_id and self.docker.inspect(settings.self_id) is not None:
@@ -89,7 +89,7 @@ class Stack:
     def _adopt(self) -> None:
         """Containers made before the helper named images: name theirs now,
         while the id can still be found (see own_image)."""
-        for c in self.docker.managed(LABEL):
+        for c in self.docker.managed(templates.mine()):
             kind = (c.get("Labels") or {}).get(f"{LABEL}.kind")
             if not kind or (self.docker.image_info(settings.own_image(kind, "current")) or {}).get("id") == c.get("ImageID"):
                 continue
@@ -101,7 +101,7 @@ class Stack:
     # ---- what there is ----------------------------------------------------------
     def state(self) -> dict:
         found = {}
-        for c in self.docker.managed(LABEL):
+        for c in self.docker.managed(templates.mine()):
             kind = (c.get("Labels") or {}).get(f"{LABEL}.kind")
             if not kind:
                 continue
@@ -148,7 +148,7 @@ class Stack:
     def put_tool(self, kind: str, body: dict) -> dict:
         """Check the values, then make (or remake) the tool in the background."""
         values = templates.clean(kind, body)
-        for other in self.docker.managed(LABEL):
+        for other in self.docker.managed(templates.mine()):
             okind = (other.get("Labels") or {}).get(f"{LABEL}.kind")
             clash = templates.ports_of(templates.config_of(other)) & templates.ports_of(values)
             if okind != kind and clash:
@@ -374,7 +374,7 @@ class Stack:
     def containers(self) -> dict[str, str]:
         """Every running container of the stack, Lucent first: {kind: id}."""
         out = {}
-        for c in sorted(self.docker.managed(LABEL), key=lambda c: (c.get("Labels") or {}).get(f"{LABEL}.kind") != "lucent"):
+        for c in sorted(self.docker.managed(templates.mine()), key=lambda c: (c.get("Labels") or {}).get(f"{LABEL}.kind") != "lucent"):
             kind = (c.get("Labels") or {}).get(f"{LABEL}.kind")
             if kind and c.get("State") == "running":
                 out[kind] = c["Id"]

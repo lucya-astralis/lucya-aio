@@ -81,12 +81,13 @@ class FakeDocker:
             self.images.setdefault(image, f"sha256:{len(self.images) + 100:064x}")
             return httpx.Response(200, text='{"status":"done"}\n')
         if path == "/containers/json":
-            label = json.loads(q["filters"])["label"][0]
+            key, _, value = json.loads(q["filters"])["label"][0].partition("=")
             return httpx.Response(200, json=[
                 {"Id": c["Id"], "Names": [c["Name"]], "Image": c["Config"]["Image"], "ImageID": c["Image"],
                  "State": "running" if c["State"]["Running"] else "exited", "Status": "",
                  "Labels": c["Config"]["Labels"]}
-                for c in self.containers.values() if label in c["Config"]["Labels"]])
+                for c in self.containers.values()
+                if key in c["Config"]["Labels"] and (not value or c["Config"]["Labels"][key] == value)])
         if path == "/containers/create":
             self._n += 1
             cid = f"c{self._n:03d}"

@@ -161,7 +161,8 @@ def _hardened(image: str, kind: str, config: dict, env: dict, mounts: list[dict]
     return {
         "Image": image,
         "Env": [f"{k}={v}" for k, v in env.items()],
-        "Labels": {LABEL: "1", f"{LABEL}.kind": kind, f"{LABEL}.config": json.dumps(config, sort_keys=True)},
+        "Labels": {LABEL: settings.prefix, f"{LABEL}.kind": kind,
+                   f"{LABEL}.config": json.dumps(config, sort_keys=True)},
         "ExposedPorts": {f"{p}/tcp": {} for p in ports},
         # inherit the image's test, but look every 2 s while starting, so
         # "ready" comes in seconds, not after the first 30-second interval
@@ -239,6 +240,13 @@ def lucent_body(token: str, setup_code: str) -> dict:
               {"Type": "volume", "Source": settings.volume("lucent", "site"), "Target": "/site"}]
     return _hardened(settings.image("lucent"), "lucent", values, env, mounts, {8060: values["port"]},
                      values["bind"])
+
+
+def mine() -> str:
+    """The label filter for this helper's containers. The label's value is
+    the helper's prefix: two helpers on one host (a test beside the real
+    stack) each see only their own."""
+    return f"{LABEL}={settings.prefix}"
 
 
 def config_of(container: dict) -> dict:

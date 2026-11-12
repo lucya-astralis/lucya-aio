@@ -45,7 +45,8 @@ annimmt ([aio/templates.py](aio/templates.py)):
 - ein Host-Ordner nur für Aperture (die Fotos), und nur einer aus
   `LUCYA_ALLOWED_PATHS` oder darunter, beim `docker run` gesetzt;
 - `exec` nur für den Join- und den Leave-Befehl des Tools;
-- er sieht und berührt nur Container mit dem Label `systems.lucya.aio`.
+- er sieht und berührt nur Container mit dem Label `systems.lucya.aio=<Präfix>`
+  (Vorgabe `lucya-`): zwei Helfer auf einem Rechner kommen sich nicht in die Quere.
 
 Die API verlangt das Token aus `/data/aio.json`, das der Helfer Lucent beim
 Anlegen als `LUCENT_AIO_TOKEN` mitgibt.
