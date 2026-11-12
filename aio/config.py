@@ -41,12 +41,22 @@ class Settings:
     channel: str = field(default_factory=lambda: _env("LUCYA_CHANNEL", "stable"))
     image_overrides: dict = field(default_factory=lambda: _images(_env("LUCYA_IMAGES")))
     tz: str = field(default_factory=lambda: _env("TZ", "Europe/Berlin"))
+    # where backups go: what `docker run -v …:/backups` mounted
+    backups: Path = field(default_factory=lambda: Path(_env("LUCYA_BACKUPS", "/backups")))
     api_port: int = field(default_factory=lambda: int(_env("LUCYA_API_PORT", "8061")))
     # this container's own id, to join it to the control network
     self_id: str = field(default_factory=lambda: _env("HOSTNAME"))
 
     def image(self, kind: str) -> str:
         return self.image_overrides.get(kind) or f"{self.registry}{kind}:{self.channel}"
+
+    def own_image(self, kind: str, which: str) -> str:
+        """The helper's own names for a container's image: `current` for the
+        one it runs, `previous` for the one before the last update. Docker
+        with containerd's image store forgets an image as soon as no name
+        points to it, even while a container runs it, and a pull or a build
+        moves the tag. With its own name the image stays, to go back to."""
+        return f"{self.prefix}images/{kind}:{which}"
 
     def container(self, kind: str) -> str:
         return f"{self.prefix}{kind}"

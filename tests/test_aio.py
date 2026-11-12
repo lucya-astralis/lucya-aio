@@ -240,3 +240,177 @@ def test_remove_refuses_odd_values_and_other_volumes(fake, api):
     assert api.delete("/tools/arca", params={"data": "all"}).status_code == 422
     assert api.delete("/tools/lucent").status_code == 422          # Lucent is not a tool
     assert fake.containers and not fake.volumes_removed
+
+
+# ---- backups ----------------------------------------------------------------------------------
+from datetime import datetime  # noqa: E402
+
+
+def test_a_backup_holds_one_archive_per_container(fake, stack, api, tmp_path):
+    stack.boot(TOKEN, "X")
+    api.put("/tools/arca", json={"port": 8070, "ui_url": "http://x.test"})
+    assert api.post("/backup").status_code == 202
+    runs = api.get("/state").json()["backup"]["runs"]
+    assert len(runs) == 1 and runs[0]["ok"] and runs[0]["kinds"] == ["arca", "lucent"]
+    folder = tmp_path / "backups" / runs[0]["name"]
+    assert sorted(f.name for f in folder.iterdir()) == ["arca.tar.gz", "backup.json", "lucent.tar.gz"]
+    assert (folder / "arca.tar.gz").read_bytes().startswith(b"\x1f\x8b")
+    snap = [argv for _, argv in fake.execs if argv[:2] == ["python", "-c"]]
+    assert len(snap) == 2 and all(a[-1] == "/data" and "VACUUM INTO" in a[2] for a in snap)
+
+
+def test_a_failed_snapshot_is_named_and_leaves_no_file(fake, stack, api, tmp_path):
+    api.put("/tools/fila", json={"port": 8085, "ui_url": "http://x.test"})
+    fake.exec_out["snapshot"] = (1, b"", b"Traceback\nsqlite3.OperationalError: disk I/O error\n")
+    api.post("/backup")
+    run = api.get("/state").json()["backup"]["runs"][0]
+    assert not run["ok"] and "disk I/O error" in run["failed"]["fila"]
+    assert not list((tmp_path / "backups" / run["name"]).glob("*.gz"))
+
+
+def test_old_backups_go(fake, stack, api, tmp_path):
+    api.put("/tools/fila", json={"port": 8085, "ui_url": "http://x.test"})
+    stack.backups.set_schedule(False, "03:30", 2)
+    for i in range(4):
+        (tmp_path / "backups" / f"2026-01-0{i + 1}_030000").mkdir()
+    api.post("/backup")
+    assert len([p for p in (tmp_path / "backups").iterdir() if p.is_dir()]) == 2
+
+
+def test_no_backups_without_the_mount(fake, tmp_path, api, stack):
+    stack.backups.root = tmp_path / "nowhere"
+    assert api.get("/state").json()["backup"] == {"available": False}
+    assert api.post("/backup").status_code == 422
+
+
+def test_the_schedule(fake, api, stack):
+    r = api.put("/backup/schedule", json={"enabled": True, "time": "02:15", "keep": 7})
+    assert r.status_code == 200 and r.json()["keep"] == 7
+    for bad in ({"enabled": "yes", "time": "02:15", "keep": 7}, {"enabled": True, "time": "25:00", "keep": 7},
+                {"enabled": True, "time": "02:15", "keep": 0}):
+        assert api.put("/backup/schedule", json=bad).status_code == 422
+    b = stack.backups
+    assert not b.due(datetime(2026, 11, 12, 2, 14))
+    assert b.due(datetime(2026, 11, 12, 2, 15))
+    b.mark_done_today(datetime(2026, 11, 12, 2, 15))
+    assert not b.due(datetime(2026, 11, 12, 23, 0)) and b.due(datetime(2026, 11, 13, 2, 30))
+
+
+def test_the_daily_tick_backs_up_once(fake, stack, api):
+    api.put("/tools/arca", json={"port": 8070, "ui_url": "http://x.test"})
+    stack.backups.set_schedule(True, "03:30", 14)
+    stack.tick(datetime(2026, 11, 12, 3, 31))
+    stack.tick(datetime(2026, 11, 12, 3, 32))
+    assert len(stack.backups.list()) == 1
+
+
+# ---- updates ----------------------------------------------------------------------------------
+def test_a_new_image_shows_as_update_and_is_taken(fake, stack, api):
+    api.put("/tools/arca", json={"port": 8070, "ui_url": "http://x.test"})
+    old = tool(fake, "arca")
+    arca = lambda: next(t for t in api.get("/state").json()["tools"] if t["kind"] == "arca")  # noqa: E731
+    assert arca()["update"] is False
+    fake.images["arca:aio"] = "sha256:" + "a" * 64                 # rebuilt
+    assert arca()["update"] is True
+    assert api.post("/tools/arca/update").status_code == 202
+    new = tool(fake, "arca")
+    assert new["Id"] != old["Id"] and new["Image"] == "sha256:" + "a" * 64
+    assert new["body"]["HostConfig"]["Mounts"] == old["body"]["HostConfig"]["Mounts"]
+    assert arca()["update"] is False and arca()["job"]["step"] == "ready"
+    run = stack.backups.list()[0]
+    assert run["kinds"] == ["arca"] and "vor dem Update" in run["why"]
+
+
+def test_an_update_that_does_not_start_goes_back(fake, stack, api):
+    api.put("/tools/fila", json={"port": 8085, "ui_url": "http://x.test"})
+    old_image = tool(fake, "fila")["Image"]
+    fake.images["fila:aio"] = "sha256:" + "b" * 64
+    fake.start_error, fake.bad_image = "exec format error", "sha256:" + "b" * 64
+    api.post("/tools/fila/update")
+    job = next(t for t in api.get("/state").json()["tools"] if t["kind"] == "fila")["job"]
+    assert job["step"] == "error" and "alte Version läuft wieder" in job["error"]
+    c = tool(fake, "fila")
+    assert c["Image"] == old_image and c["State"]["Running"] and len(fake.containers) == 1
+    assert c["body"]["Image"] == "lucya-images/fila:previous"
+    assert fake.images["lucya-images/fila:previous"] == old_image
+
+
+def test_an_update_without_a_new_image_changes_nothing(fake, stack, api):
+    api.put("/tools/strata", json={"port": 8086, "ui_url": "http://x.test"})
+    first = tool(fake, "strata")["Id"]
+    api.post("/tools/strata/update")
+    job = next(t for t in api.get("/state").json()["tools"] if t["kind"] == "strata")["job"]
+    assert job["step"] == "ready" and job["note"] == "Schon aktuell." and tool(fake, "strata")["Id"] == first
+
+
+def test_lucent_updates_and_stays_on_the_control_network(fake, stack, api):
+    stack.boot(TOKEN, "ABCD-EFGH-JKLM")
+    fake.images["lucent:aio"] = "sha256:" + "c" * 64
+    assert api.get("/state").json()["lucent"]["update"] is True
+    api.post("/tools/lucent/update")
+    new = tool(fake, "lucent")
+    assert new["Image"] == "sha256:" + "c" * 64
+    assert fake.networks["lucya-aio"]["members"][new["Id"]] == ["lucent"]
+    assert "LUCENT_AIO_TOKEN=" + TOKEN in new["body"]["Env"]
+    assert api.get("/state").json()["lucent"]["job"]["step"] == "ready"
+
+
+def test_check_pulls_registry_images_only(fake, stack, api):
+    from aio.config import settings
+    stack.boot(TOKEN, "X")
+    api.put("/tools/arca", json={"port": 8070, "ui_url": "http://x.test"})
+    settings.image_overrides = {"lucent": "lucent:aio"}
+    fake.images["ghcr.io/lucya-astralis/arca:stable"] = "sha256:" + "d" * 64
+    api.post("/updates/check")
+    assert fake.pulled == ["ghcr.io/lucya-astralis/arca:stable"]
+
+
+def test_update_all_takes_every_update_one_by_one_lucent_last(fake, stack, api):
+    stack.boot(TOKEN, "X")
+    for k, port in (("arca", 8070), ("fila", 8085), ("strata", 8086)):
+        api.put(f"/tools/{k}", json={"port": port, "ui_url": "http://x.test"})
+    fake.images["arca:aio"] = "sha256:" + "1" * 64
+    fake.images["lucent:aio"] = "sha256:" + "2" * 64
+    r = api.post("/updates/all")
+    assert r.status_code == 202 and r.json()["kinds"] == ["arca", "lucent"]
+    assert tool(fake, "arca")["Image"] == "sha256:" + "1" * 64 and tool(fake, "lucent")["Image"] == "sha256:" + "2" * 64
+    assert [b["kinds"] for b in stack.backups.list()] == [["lucent"], ["arca"]]   # newest first
+
+
+def test_docker_times_are_shown_in_the_local_zone(monkeypatch):
+    import time as _t
+    from aio.stack import _local
+    if not hasattr(_t, "tzset"):
+        pytest.skip("this Python cannot switch zones (no time.tzset)")
+    monkeypatch.setenv("TZ", "Europe/Berlin")
+    _t.tzset()
+    assert _local("2026-11-12T14:12:03.123456789Z") == "2026-11-12T15:12:03+01:00"
+    assert _local("") == "" and _local("soon") == "soon"
+    monkeypatch.delenv("TZ")
+    _t.tzset()
+
+
+def test_every_container_names_its_image(fake, stack, api):
+    stack.boot(TOKEN, "X")
+    api.put("/tools/arca", json={"port": 8070, "ui_url": "http://x.test"})
+    assert fake.images["lucya-images/arca:current"] == tool(fake, "arca")["Image"]
+    assert fake.images["lucya-images/lucent:current"] == tool(fake, "lucent")["Image"]
+
+
+def test_no_update_without_a_way_back(fake, stack, api):
+    api.put("/tools/strata", json={"port": 8086, "ui_url": "http://x.test"})
+    del fake.images["lucya-images/strata:current"]          # made before the helper named images
+    old = tool(fake, "strata")
+    fake.images["strata:aio"] = "sha256:" + "e" * 64           # the tag moved: the old id has no name now
+    api.post("/tools/strata/update")
+    job = next(t for t in api.get("/state").json()["tools"] if t["kind"] == "strata")["job"]
+    assert job["step"] == "error" and "keinen Namen" in job["error"]
+    assert tool(fake, "strata")["Id"] == old["Id"]             # nothing was touched
+    assert stack.backups.list() == []                          # and no backup made for nothing
+
+
+def test_boot_names_the_images_of_containers_made_before(fake, stack, api):
+    api.put("/tools/fila", json={"port": 8085, "ui_url": "http://x.test"})
+    del fake.images["lucya-images/fila:current"]
+    stack.boot(TOKEN, "X")
+    assert fake.images["lucya-images/fila:current"] == tool(fake, "fila")["Image"]

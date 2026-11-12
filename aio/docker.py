@@ -48,6 +48,19 @@ class Docker:
                 return False
             raise
 
+    def image_info(self, image: str) -> dict | None:
+        """Id and creation time of an image by name, None when it is not here."""
+        try:
+            d = self._call("GET", f"/images/{quote(image, safe='')}/json").json()
+        except DockerError as e:
+            if e.status == 404:
+                return None
+            raise
+        return {"id": d["Id"], "created": d.get("Created", "")}
+
+    def tag(self, image: str, repo: str, tag: str) -> None:
+        self._call("POST", f"/images/{quote(image, safe='')}/tag", params={"repo": repo, "tag": tag}, ok=(201,))
+
     def pull(self, image: str) -> None:
         repo, _, tag = image.rpartition(":") if ":" in image.rsplit("/", 1)[-1] else (image, "", "latest")
         r = self._call("POST", "/images/create", params={"fromImage": repo, "tag": tag})
@@ -118,6 +131,41 @@ class Docker:
         raw = self._call("POST", f"/exec/{eid}/start", json={"Detach": False, "Tty": False}).content
         code = self._call("GET", f"/exec/{eid}/json").json().get("ExitCode")
         return (code if code is not None else -1), demux(raw)
+
+
+    def exec_to_file(self, cid: str, argv: list[str], path) -> tuple[int, str]:
+        """Run argv; what it writes to stdout goes into the file at path, as
+        it comes (a backup can be larger than memory should hold). Returns
+        the exit code and what came on stderr."""
+        eid = self._call("POST", f"/containers/{cid}/exec",
+                         json={"Cmd": argv, "AttachStdout": True, "AttachStderr": True}).json()["Id"]
+        err = bytearray()
+        with open(path, "wb") as out, self.http.stream(
+                "POST", f"/exec/{eid}/start", json={"Detach": False, "Tty": False}) as r:
+            if r.status_code != 200:
+                raise DockerError(r.status_code, r.read().decode("utf-8", "replace"))
+            frames = _Frames()
+            for chunk in r.iter_bytes():
+                for stream, data in frames.feed(chunk):
+                    (out.write(data) if stream == 1 else err.extend(data))
+        code = self._call("GET", f"/exec/{eid}/json").json().get("ExitCode")
+        return (code if code is not None else -1), err.decode("utf-8", "replace")
+
+
+class _Frames:
+    """Docker's multiplexed stream, frame by frame, across chunk borders."""
+    def __init__(self):
+        self.buf = bytearray()
+
+    def feed(self, chunk: bytes):
+        self.buf.extend(chunk)
+        while len(self.buf) >= 8:
+            size = struct.unpack(">I", bytes(self.buf[4:8]))[0]
+            if len(self.buf) < 8 + size:
+                return
+            stream, data = self.buf[0], bytes(self.buf[8:8 + size])
+            del self.buf[:8 + size]
+            yield stream, data
 
 
 def demux(raw: bytes) -> str:

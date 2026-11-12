@@ -6,6 +6,7 @@ the token the helper gave it. It takes values, never commands."""
 from __future__ import annotations
 
 import hmac
+import re
 
 from fastapi import Depends, FastAPI, Header, HTTPException, Request
 from fastapi.responses import JSONResponse
@@ -46,6 +47,36 @@ def create_app(stack: Stack, token: str) -> FastAPI:
     @app.post("/tools/{kind}/join", dependencies=[Depends(authorized)])
     async def join(kind: str, request: Request):
         return stack.join(kind, await _body(request))
+
+    @app.post("/updates/check", status_code=202, dependencies=[Depends(authorized)])
+    def check_updates():
+        return stack.check_updates()
+
+    @app.post("/updates/all", status_code=202, dependencies=[Depends(authorized)])
+    def update_all():
+        return stack.update_all()
+
+    @app.post("/tools/{kind}/update", status_code=202, dependencies=[Depends(authorized)])
+    def update(kind: str):
+        return stack.update(kind)
+
+    @app.post("/backup", status_code=202, dependencies=[Depends(authorized)])
+    def backup():
+        return stack.backup_now()
+
+    @app.put("/backup/schedule", dependencies=[Depends(authorized)])
+    async def schedule(request: Request):
+        b = await _body(request)
+        enabled, at, keep = b.get("enabled"), str(b.get("time", "")), b.get("keep")
+        if not isinstance(enabled, bool):
+            raise Invalid("enabled ist true oder false.")
+        if not re.fullmatch(r"([01]\d|2[0-3]):[0-5]\d", at):
+            raise Invalid("Die Uhrzeit ist HH:MM, etwa 03:30.")
+        if not isinstance(keep, int) or isinstance(keep, bool) or not 1 <= keep <= 365:
+            raise Invalid("Behalten werden 1 bis 365 Sicherungen.")
+        if stack.backups is None or not stack.backups.available():
+            raise Invalid("Keine Ablage für Sicherungen: der Helfer braucht -v …:/backups.")
+        return stack.backups.set_schedule(enabled, at, keep)
 
     @app.post("/tools/{kind}/restart", dependencies=[Depends(authorized)])
     def restart(kind: str):

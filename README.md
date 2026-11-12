@@ -9,6 +9,7 @@ zu koppeln.
 docker run -d --name lucya-aio --restart always \
   -v /var/run/docker.sock:/var/run/docker.sock \
   -v lucya-aio-data:/data \
+  -v lucya-backups:/backups \
   ghcr.io/lucya-astralis/lucya-aio:stable
 docker logs lucya-aio      # Adresse und Einrichtungscode
 ```
@@ -51,6 +52,42 @@ Anlegen als `LUCENT_AIO_TOKEN` mitgibt.
 | `POST /tools/{kind}/join` | `{code, role, again}` → führt `python -m <tool> --lucent-join http://lucent:8060 CODE --ui-url … --base-url http://<tool>:<port> --role …` im Container aus; mit `again: true` vorher `--lucent-leave` (Fila und strata lehnen einen Join ab, solange sie gekoppelt sind) |
 | `POST /tools/{kind}/restart` | Container neu starten |
 | `DELETE /tools/{kind}?data=keep\|delete` | Container entfernen, das Volume nur mit `data=delete` |
+| `POST /updates/check` | zieht im Hintergrund die Images aus der Registry; danach sagt `/state` je Container `update` |
+| `POST /tools/{kind}/update` | auch `lucent`: sichern → Image ziehen → Container mit neuem Image neu anlegen → warten; antwortet er nicht, läuft das alte Image wieder |
+| `POST /updates/all` | jedes Update nacheinander, Lucent zuletzt |
+| `POST /backup` | sichert alle laufenden Container |
+| `PUT /backup/schedule` | `{enabled, time: "HH:MM", keep}`: tägliche Sicherung, wie viele bleiben |
+
+## Updates
+
+Jedes Image, aus dem der Helfer einen Container macht, bekommt einen
+eigenen Namen, `lucya-images/<tool>:current`; vor einem Update wird daraus
+`:previous`. Docker mit dem containerd-Bildspeicher (Docker Desktop, neuere
+Engines) vergisst ein Image, sobald kein Name mehr darauf zeigt, auch wenn
+ein Container es noch nutzt, und `pull` oder `build` verschieben den Tag.
+Ohne eigenen Namen gäbe es nach einem misslungenen Update kein Zurück. Hat
+ein laufendes Image keinen Namen mehr, lehnt der Helfer das Update ab,
+statt ohne Rückweg zu tauschen.
+
+## Sicherungen
+
+Unter `/backups` (was beim `docker run` dort eingehängt ist: ein benanntes
+Volume oder ein Ordner, `-v /srv/backup:/backups`) liegt je Lauf ein Ordner
+mit einem `<tool>.tar.gz` je Container und `backup.json`. Die Kopie
+entsteht im Container selbst, als sein Benutzer: jede SQLite-Datei oben in
+`/data` per `VACUUM INTO`, also vollständig auch im WAL-Modus und im
+laufenden Betrieb, alles andere (Schlüssel, Kopplung) wie es ist. Ein
+Archiv ist `/data`, so wie es zurück soll:
+
+```bash
+docker run --rm -v lucya-arca-data:/data -v lucya-backups:/backups alpine \
+  sh -c 'cd /data && tar xzf /backups/2026-11-12_033000/arca.tar.gz'
+```
+
+Vorher das Tool stoppen (`docker stop lucya-arca`), danach wieder starten.
+
+Ohne `/backups` gibt es keine Sicherungen, und vor einem Update wird dann
+auch keine gemacht.
 
 ## Einstellungen beim `docker run`
 

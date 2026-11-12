@@ -6,9 +6,15 @@ the API for Lucent."""
 from __future__ import annotations
 
 import logging
+import os
 import sys
 
+import threading
+import time
+from datetime import datetime
+
 from . import secrets
+from .backup import Backups
 from .api import create_app
 from .config import settings
 from .docker import Docker, DockerError
@@ -16,6 +22,10 @@ from .stack import Stack
 
 
 def main() -> int:
+    # times in backups and on the system page in the host's zone (TZ), not UTC
+    os.environ.setdefault("TZ", settings.tz)
+    if hasattr(time, "tzset"):                    # not on every platform's build
+        time.tzset()
     logging.basicConfig(level=logging.INFO, format="%(message)s")
     log = logging.getLogger("aio")
     docker = Docker(settings.socket)
@@ -26,7 +36,7 @@ def main() -> int:
               "Starte den Helfer mit -v /var/run/docker.sock:/var/run/docker.sock.", file=sys.stderr)
         return 1
     values = secrets.load(settings.data_dir)
-    stack = Stack(docker)
+    stack = Stack(docker, backups=Backups(docker))
     try:
         stack.boot(values["token"], values["setup_code"])
     except DockerError as e:
@@ -36,7 +46,18 @@ def main() -> int:
     log.info("  Lucent läuft auf Port %s dieses Rechners.", settings.lucent_port)
     log.info("  Öffne http://<dieser-rechner>:%s/setup", settings.lucent_port)
     log.info("  Einrichtungscode: %s", values["setup_code"])
+    log.info("  Sicherungen: %s", settings.backups if stack.backups.available()
+             else "keine (für Sicherungen -v lucya-backups:/backups beim docker run)")
     log.info("")
+
+    def clock():
+        while True:
+            try:
+                stack.tick(datetime.now())
+            except Exception as e:                      # the clock keeps going
+                log.warning("Zeitplan: %s", e)
+            time.sleep(30)
+    threading.Thread(target=clock, daemon=True, name="clock").start()
     import uvicorn
     uvicorn.run(create_app(stack, values["token"]), host="0.0.0.0", port=settings.api_port, log_level="warning")
     return 0
