@@ -15,6 +15,11 @@ docker run -d --name lucya-aio --restart always \
 docker logs lucya-aio      # Adresse und Einrichtungscode
 ```
 
+Die Images baut GitHub (`.github/workflows/image.yml` in jedem Repo):
+`main` → `:stable`, `beta/*` → `:beta`. Solange die Lucent-Anbindung der
+Tools nur auf ihren beta-Branches liegt, mit `-e LUCYA_CHANNEL=beta`
+starten; der Helfer selbst kommt als `lucya-aio:stable`.
+
 Beim Start legt er an, was fehlt:
 
 - das Netz `lucya` (Lucent und Tools) und das interne Netz `lucya-aio`
