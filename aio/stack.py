@@ -25,7 +25,7 @@ log = logging.getLogger("aio")
 
 STEPS = ("pull", "create", "start", "ready")      # a job's way; "error" ends it early
 UPDATE_STEPS = ("backup", "pull", "update", "ready")
-BUSY = ("pull", "create", "start", "backup", "update")
+BUSY = ("queued", "pull", "create", "start", "backup", "update", "restore")
 READY_TIMEOUT = 120.0
 
 
@@ -168,6 +168,13 @@ class Stack:
         with self._lock:
             self.jobs[kind].update(step=step, error=error, since=_now())
 
+    def _result(self, kind: str, **values) -> None:
+        """How a job ended, for the page to say: outcome (updated, current,
+        rolled_back, failed, restored), the backup made before, from and to
+        which image, when. Kept until the next job of that kind."""
+        with self._lock:
+            self.jobs[kind]["result"] = {"finished": _now(), **values}
+
     def _make(self, kind: str, values: dict) -> None:
         name, image = settings.container(kind), settings.image(kind)
         try:
@@ -272,7 +279,7 @@ class Stack:
             if job and job["step"] in BUSY:
                 raise Invalid(f"`{kind}` ist gerade beschäftigt.")
             self.jobs[kind] = {"step": "pull", "error": None, "since": _now(), "kind": "update",
-                               "config": templates.config_of(c["Config"])}
+                               "config": templates.config_of(c["Config"]), "started": _now()}
         self._spawn(self._update, kind)
         return dict(self.jobs[kind])
 
@@ -287,8 +294,9 @@ class Stack:
             busy = [k for k in kinds if (self.jobs.get(k) or {}).get("step") in BUSY]
             if busy:
                 raise Invalid(f"Gerade beschäftigt: {', '.join(busy)}.")
-            for k in kinds:
-                self.jobs[k] = {"step": "pull", "error": None, "since": _now(), "kind": "update"}
+            for k in kinds:                          # they wait their turn, and say so
+                self.jobs[k] = {"step": "queued", "error": None, "since": _now(), "kind": "update",
+                                "started": _now()}
         self._spawn(self._update_each, kinds)
         return {"kinds": kinds}
 
@@ -345,30 +353,37 @@ class Stack:
                 self._step(kind, "ready")
                 with self._lock:
                     self.jobs[kind]["note"] = "Schon aktuell."
+                self._result(kind, outcome="current", to=old_image[7:19])
                 return
             self._keep_previous(kind, old_image)             # before the old container goes
+            backup = None
             if self.backups is not None and self.backups.available():
                 self._step(kind, "backup")
                 r = self.backups.run({kind: old["Id"]}, f"vor dem Update von {kind}")
                 if not r["ok"]:
                     raise DockerError(500, f"Die Sicherung vorher schlug fehl: {r['failed'].get(kind)}")
+                backup = r["name"]
             self._step(kind, "update")
             swapped = True
             self._swap(kind, old, self._body(kind, values))
             self._step(kind, "ready")
+            self._result(kind, outcome="updated", backup=backup, **{"from": old_image[7:19], "to": new["id"][7:19]})
             log.info("%s aktualisiert", kind)
         except Exception as e:                       # a job must never die silently
-            msg = str(e)
+            msg, outcome = str(e), "failed"
             if swapped:                                   # back to what ran before
                 try:
                     body = self._body(kind, values)
                     body["Image"] = settings.own_image(kind, "previous")
                     self._swap(kind, self.docker.inspect(settings.container(kind)), body)
                     msg += " Die alte Version läuft wieder."
+                    outcome = "rolled_back"
                 except Exception as e2:
                     msg += f" Zurück zur alten Version ging auch nicht: {e2}"
             log.warning("Update %s: %s", kind, msg)
             self._step(kind, "error", msg)
+            # failed before the swap: nothing changed, the old one still runs
+            self._result(kind, outcome=outcome, untouched=not swapped, **{"from": old_image[7:19]})
 
     # ---- backups -------------------------------------------------------------------------
     def containers(self) -> dict[str, str]:
@@ -429,7 +444,8 @@ class Stack:
             if busy:
                 raise Invalid(f"Gerade beschäftigt: {', '.join(busy)}.")
             for k in order:
-                self.jobs[k] = {"step": "backup", "error": None, "since": _now(), "kind": "restore", "run": run}
+                self.jobs[k] = {"step": "backup", "error": None, "since": _now(), "kind": "restore", "run": run,
+                                "started": _now()}
         self._spawn(self._restore_all, run, order)
         return {"kinds": order}
 
@@ -442,11 +458,14 @@ class Stack:
         except Exception as e:                       # nothing touched yet: all stop here
             for k in order:
                 self._step(k, "error", str(e))
+                self._result(k, outcome="failed", untouched=True)
             return
         for k in order:
-            self._restore_one(run, k)
+            self._step(k, "queued")
+        for k in order:
+            self._restore_one(run, k, r["name"])
 
-    def _restore_one(self, run: str, kind: str) -> None:
+    def _restore_one(self, run: str, kind: str, before: str | None = None) -> None:
         from .backup import RESTORE
         name = settings.container(kind)
         try:
@@ -470,6 +489,7 @@ class Stack:
             self.docker.start(c["Id"])
             self._wait_ready(c["Id"])
             self._step(kind, "ready")
+            self._result(kind, outcome="restored", backup=before, run=run)
             log.info("%s wiederhergestellt aus %s", kind, run)
         except Exception as e:
             log.warning("Wiederherstellen %s: %s", kind, e)
@@ -478,6 +498,7 @@ class Stack:
             except Exception:
                 pass
             self._step(kind, "error", str(e))
+            self._result(kind, outcome="failed", backup=before, run=run)
 
     def tick(self, now: datetime) -> None:
         """Called every half minute: the daily backup, when it is due."""

@@ -596,3 +596,55 @@ def test_restore_needs_the_tool_to_be_there(with_self, stack, api):
     api.delete("/tools/arca")
     r = api.post(f"/backups/{run}/restore", json={"kinds": ["arca"]})
     assert r.status_code == 422 and "hinzufügen" in r.json()["detail"]
+
+
+# ---- what a job says while it runs and when it is over ------------------------------------------
+def _job(api, kind):
+    st = api.get("/state").json()
+    return st["lucent"]["job"] if kind == "lucent" else next(t for t in st["tools"] if t["kind"] == kind)["job"]
+
+
+def test_an_update_says_how_it_went(fake, stack, api):
+    api.put("/tools/arca", json={"port": 8070, "ui_url": "http://x.test"})
+    old = tool(fake, "arca")["Image"]
+    fake.images["arca:aio"] = "sha256:" + "f" * 64
+    api.post("/tools/arca/update")
+    r = _job(api, "arca")["result"]
+    assert r["outcome"] == "updated" and r["from"] == old[7:19] and r["to"] == "f" * 12
+    assert r["backup"] == stack.backups.list()[0]["name"] and r["finished"]
+
+
+def test_a_rollback_and_a_refusal_say_so(fake, stack, api):
+    api.put("/tools/fila", json={"port": 8085, "ui_url": "http://x.test"})
+    fake.images["fila:aio"] = "sha256:" + "b" * 64
+    fake.start_error, fake.bad_image = "exec format error", "sha256:" + "b" * 64
+    api.post("/tools/fila/update")
+    assert _job(api, "fila")["result"]["outcome"] == "rolled_back"
+    api.put("/tools/strata", json={"port": 8086, "ui_url": "http://x.test"})
+    del fake.images["lucya-images/strata:current"]
+    fake.images["strata:aio"] = "sha256:" + "e" * 64
+    api.post("/tools/strata/update")
+    r = _job(api, "strata")["result"]
+    assert r["outcome"] == "failed" and r["untouched"] is True
+
+
+def test_update_all_shows_the_queue(fake, stack, api):
+    api.put("/tools/arca", json={"port": 8070, "ui_url": "http://x.test"})
+    api.put("/tools/fila", json={"port": 8085, "ui_url": "http://x.test"})
+    fake.images["arca:aio"] = "sha256:" + "1" * 64
+    fake.images["fila:aio"] = "sha256:" + "2" * 64
+    held = []
+    stack._spawn = lambda fn, *args: held.append((fn, args))      # not yet: look at the queue first
+    api.post("/updates/all")
+    assert {_job(api, k)["step"] for k in ("arca", "fila")} == {"queued"}
+    fn, args = held[0]
+    fn(*args)
+    assert {_job(api, k)["result"]["outcome"] for k in ("arca", "fila")} == {"updated"}
+
+
+def test_a_restore_says_which_backup_came_before(with_self, stack, api):
+    api.put("/tools/arca", json={"port": 8070, "ui_url": "http://x.test"})
+    run = _a_backup(api, stack)
+    api.post(f"/backups/{run}/restore", json={"kinds": ["arca"]})
+    r = _job(api, "arca")["result"]
+    assert r["outcome"] == "restored" and r["run"] == run and r["backup"] == stack.backups.list()[0]["name"]
