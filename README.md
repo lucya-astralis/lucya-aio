@@ -24,15 +24,14 @@ Ohne Compose geht dasselbe mit einem Befehl:
 docker run -d --name lucya-aio --restart always \
   -v /var/run/docker.sock:/var/run/docker.sock \
   -v lucya-aio-data:/data -v lucya-backups:/backups \
-  -e LUCYA_ALLOWED_PATHS=/srv/fotos -e LUCYA_CHANNEL=beta \
+  -e LUCYA_ALLOWED_PATHS=/srv/fotos \
   ghcr.io/lucya-astralis/lucya-aio:stable
 ```
 
 Die Images baut GitHub (`.github/workflows/image.yml` in jedem Repo):
-`main` → `:stable`, `beta/*` → `:beta`. Solange die Lucent-Anbindung der
-Tools nur auf ihren beta-Branches liegt, mit `-e LUCYA_CHANNEL=beta`
-starten (in `.env.example` schon so); der Helfer selbst kommt als
-`lucya-aio:stable`.
+`main` → `:stable`, `beta/*` → `:beta`. `stable` ist die Vorgabe und der
+Stand, den man betreibt (bis Aperture fertig ist, ein Pre-Release); `beta`
+bringt, was gerade erst gebaut wurde.
 
 Beim Start legt er an, was fehlt:
 
