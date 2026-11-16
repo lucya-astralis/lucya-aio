@@ -1,14 +1,13 @@
 # Builds this repository's image for amd64 and arm64 and pushes it to
 # ghcr.io/lucya-astralis/<IMAGE>. Tags, as lucya-aio pulls them:
 #   main        -> :stable
-#   beta/*      -> :beta
 #   v1.2.3 tag  -> :1.2.3 and :1.2
 #   every build -> :sha-<short>
 name: image
 
 on:
   push:
-    branches: [main, "beta/**"]
+    branches: [main]
     tags: ["v*"]
   workflow_dispatch:
 
@@ -41,7 +40,6 @@ jobs:
           images: ghcr.io/${{ github.repository_owner }}/${{ env.IMAGE }}
           tags: |
             type=raw,value=stable,enable={{is_default_branch}}
-            type=raw,value=beta,enable=${{ startsWith(github.ref, 'refs/heads/beta/') }}
             type=semver,pattern={{version}}
             type=semver,pattern={{major}}.{{minor}}
             type=sha

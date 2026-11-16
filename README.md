@@ -29,9 +29,8 @@ docker run -d --name lucya-aio --restart always \
 ```
 
 Die Images baut GitHub (`.github/workflows/image.yml` in jedem Repo):
-`main` → `:stable`, `beta/*` → `:beta`. `stable` ist die Vorgabe und der
-Stand, den man betreibt (bis Aperture fertig ist, ein Pre-Release); `beta`
-bringt, was gerade erst gebaut wurde.
+`main` → `:stable`, ein Tag `v1.2.3` → `:1.2.3` und `:1.2`. `stable` ist die
+Vorgabe; wer eine Version festhalten will, setzt `LUCYA_CHANNEL` auf sie.
 
 Beim Start legt er an, was fehlt:
 
