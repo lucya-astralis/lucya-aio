@@ -50,10 +50,10 @@ class Settings:
     prefix: str = field(default_factory=lambda: _env("LUCYA_PREFIX", "lucya-"))
     registry: str = field(default_factory=lambda: _env("LUCYA_REGISTRY", "ghcr.io/lucya-astralis/"))
     channel: str = field(default_factory=lambda: _env("LUCYA_CHANNEL", "stable"))
-    # the published list of tools (templates.py: the catalogue); empty: only
+    # the store's list of tools (templates.py: the catalogue); empty: only
     # the shipped one and /data/catalogue.d
     catalogue_url: str = field(default_factory=lambda: _env(
-        "LUCYA_CATALOGUE_URL", "https://raw.githubusercontent.com/lucya-astralis/lucya-aio/main/aio/catalogue.json"))
+        "LUCYA_CATALOGUE_URL", "https://store.lucya.systems/v1/catalogue.json"))
     image_overrides: dict = field(default_factory=lambda: _images(_env("LUCYA_IMAGES")))
     allowed_paths: list = field(default_factory=lambda: _paths(_env("LUCYA_ALLOWED_PATHS")))
     tz: str = field(default_factory=lambda: _env("TZ", "Europe/Berlin"))

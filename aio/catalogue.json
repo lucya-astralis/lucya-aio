@@ -1,10 +1,66 @@
 {
-  "version": 1,
-  "tools": [
-    {"kind": "arca", "name": "arca", "port": 8070, "description": "Inventar und Geräte"},
-    {"kind": "fila", "name": "Fila", "port": 8085, "description": "Tickets und Aufgaben"},
-    {"kind": "strata", "name": "strata", "port": 8086, "description": "Aufbau des Netzes"},
-    {"kind": "rawuggerl", "name": "rawuggerl.de Verwaltung", "port": 8087,
-     "description": "Termine, Presse, Galerie und Mitglieder von rawuggerl.de", "suggested": false}
-  ]
+ "version": 1,
+ "updated": "2026-11-18T12:17:01+00:00",
+ "tools": [
+  {
+   "kind": "aperture",
+   "name": "Aperture",
+   "port": 8090,
+   "data": "/data",
+   "suggested": true,
+   "summary": "Fotos und Galerie, mit Tags und Alben.",
+   "description": "Aperture zeigt einen Foto-Ordner als Galerie, mit Alben, Tags, Beschreibungen und geteilten Links. Die öffentliche Galerie läuft auf einem eigenen Port.\n\nBraucht einen freigegebenen Foto-Ordner des Rechners (LUCYA_ALLOWED_PATHS beim Helfer).",
+   "category": "Medien",
+   "publisher": "lucya.systems",
+   "icon": "<svg viewBox=\"-6 -6 112 112\" xmlns=\"http://www.w3.org/2000/svg\"><rect x=\"-6\" y=\"-6\" width=\"112\" height=\"112\" fill=\"#000\" /><path fill=\"#fff\" d=\"M53.29,7.21L61.74,36.74L66.55,48.62L87.49,26.95ZM88.7,31.45L67.36,53.54L59.47,63.64L88.7,70.94ZM85.42,74.24L55.61,66.8L42.92,65.02L51.22,93.99ZM46.71,92.79L38.26,63.26L33.45,51.38L12.51,73.05ZM11.3,68.55L32.64,46.46L40.53,36.36L11.3,29.06ZM14.58,25.76L44.39,33.2L57.08,34.98L48.78,6.01Z\" /></svg>\n"
+  },
+  {
+   "kind": "arca",
+   "name": "arca",
+   "port": 8070,
+   "data": "/data",
+   "suggested": true,
+   "summary": "Inventar und Geräte: Bestand, Ersatzteile, Verleih.",
+   "description": "arca führt jedes Gerät mit Nummer, Zustand, Standort und Geschichte. Ersatzteile, Reparaturen, Tests und Verleih stehen beim Gerät; Etiketten druckt arca selbst.\n\nIn Lucent erscheinen die Geräte mit Suche und Filtern, und Fotos aus Aperture hängen am passenden Gerät.",
+   "category": "Werkstatt",
+   "publisher": "lucya.systems",
+   "icon": "<svg viewBox=\"-6 -6 112 112\" xmlns=\"http://www.w3.org/2000/svg\"><rect x=\"-6\" y=\"-6\" width=\"112\" height=\"112\" fill=\"#000\" /><path fill=\"#fff\" d=\"M50,8.24L12,27.24L12,39.76L50,58.76L88,39.76L88,27.24ZM12,44.24L12,72.76L48,90.76L48,62.24ZM52,62.24L52,90.76L88,72.76L88,44.24Z\" /></svg>\n"
+  },
+  {
+   "kind": "fila",
+   "name": "Fila",
+   "port": 8085,
+   "data": "/data",
+   "suggested": true,
+   "summary": "Tickets und Aufgaben, auch zu einem Gerät.",
+   "description": "Fila sammelt Aufgaben mit Status, Priorität und Fälligkeit. Eine Aufgabe kann sich auf ein Gerät aus arca beziehen und steht dann auch dort.\n\nIn Lucent legt man Aufgaben an, ändert sie und sieht, was überfällig ist.",
+   "category": "Organisation",
+   "publisher": "lucya.systems",
+   "icon": "<svg viewBox=\"0 0 168 168\" xmlns=\"http://www.w3.org/2000/svg\"><rect width=\"168\" height=\"168\" fill=\"#000\" /><path fill=\"#fff\" d=\"M63.78 40 139.78 40 129.27 66 53.27 66ZM51.25 71 105.97 71 95.47 97 40.75 97ZM38.73 102 72.17 102 61.66 128 28.22 128Z\" /></svg>\n"
+  },
+  {
+   "kind": "rawuggerl",
+   "name": "rawuggerl.de Verwaltung",
+   "port": 8087,
+   "data": "/data",
+   "suggested": false,
+   "summary": "Termine, Presse, Galerie und Mitglieder von rawuggerl.de.",
+   "description": "Pflegt die Website des Krampus- und Brauchtumsvereins D' Isar Rawuggerl: Termine (mit Seite für Suchmaschinen und Kalender zum Abonnieren), Presseberichte, die Galerie und die Steckbriefe der Mitglieder mit Fotos mit und ohne Maske.\n\nAlles wird in Lucent gepflegt und sofort in den Ordner der Website geschrieben, per SMB auf den Raspberry Pi oder in einen Ordner.",
+   "category": "Verein",
+   "publisher": "lucya.systems",
+   "icon": "<svg xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"-2 -2 28 28\"><rect x=\"-2\" y=\"-2\" width=\"28\" height=\"28\" fill=\"#000\"/><path fill=\"#fff\" d=\"M5 3c1.5 2.2 2.2 4 2.4 6 .9-.8 2.3-1.3 4.6-1.3s3.7.5 4.6 1.3c.2-2 .9-3.8 2.4-6-.2 2.6.1 5 1 7.2 1 2.6.6 5.4-1.3 7.6C17 19.9 14.6 21 12 21s-5-1.1-6.7-3.2C3.4 15.6 3 12.8 4 10.2 4.9 8 5.2 5.6 5 3Zm4.5 9.3a1.3 1.3 0 1 0 0 2.6 1.3 1.3 0 0 0 0-2.6Zm5 0a1.3 1.3 0 1 0 0 2.6 1.3 1.3 0 0 0 0-2.6ZM12 16c-1 0-1.8.4-2.3 1h4.6c-.5-.6-1.3-1-2.3-1Z\"/></svg>\n"
+  },
+  {
+   "kind": "strata",
+   "name": "strata",
+   "port": 8086,
+   "data": "/data",
+   "suggested": true,
+   "summary": "Aufbau des Netzes: Geräte, VMs, Dienste und ihre Verbindungen.",
+   "description": "strata hält fest, was worauf läuft und was womit verbunden ist: Geräte, virtuelle Maschinen, Container, Dienste, Netze und Kabel.\n\nLucent zeichnet daraus den Netzplan und verbindet Knoten mit Geräten aus arca.",
+   "category": "Netz",
+   "publisher": "lucya.systems",
+   "icon": "<svg viewBox=\"0 0 121.70 121.70\" xmlns=\"http://www.w3.org/2000/svg\"><rect width=\"121.70\" height=\"121.70\" rx=\"21.91\" fill=\"#000\" /><path fill=\"#fff\" d=\"M14,102.85L98,102.85L107.7,78.85L23.7,78.85ZM24,72.85L88,72.85L97.7,48.85L33.7,48.85ZM34,42.85L78,42.85L87.7,18.85L43.7,18.85Z\" /></svg>\n"
+  }
+ ]
 }

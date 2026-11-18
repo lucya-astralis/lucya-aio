@@ -12,6 +12,7 @@ same network: no call between them leaves the machine.
 
 from __future__ import annotations
 
+import dataclasses
 import ipaddress
 import json
 import posixpath
@@ -41,8 +42,14 @@ class Tool:
     port: int                # inside the container, fixed by its image
     data: str                # where it keeps its data, inside the container
     module: str = ""         # `python -m <module> --lucent-join …`; the kind when empty
-    description: str = ""
+    description: str = ""    # one line: the store's "summary"
     suggested: bool = True   # ticked in Lucent's first setup (a tool for one website is not)
+    # what Lucent's store page shows; the helper only passes it on
+    details: str = ""
+    category: str = ""
+    publisher: str = ""
+    homepage: str = ""
+    icon: str = ""
 
     def join_argv(self, code: str, ui_url: str, role: str) -> list[str]:
         return ["python", "-m", self.module or self.kind, "--lucent-join", LUCENT_INTERNAL, code,
@@ -79,8 +86,9 @@ class Aperture(Tool):
 # new one needs no new helper:
 #
 #   1. aio/catalogue.json, shipped with the helper;
-#   2. the published catalogue (LUCYA_CATALOGUE_URL), fetched on start-up and
-#      with every update check, kept in /data/catalogue.json;
+#   2. the store's catalogue (LUCYA_CATALOGUE_URL, store.lucya.systems),
+#      fetched on start-up and with every update check, kept in
+#      /data/catalogue.json;
 #   3. /data/catalogue.d/*.json on this host, for one's own tools.
 #
 # Later ones win per kind. Whatever the source, a tool's image is still
@@ -114,13 +122,33 @@ def tool_of(entry) -> Tool:
     module = entry.get("module", "") or ""
     if not isinstance(module, str) or (module and not _MODULE.fullmatch(module)):
         raise Invalid(f"{kind}: unbrauchbares Modul {module!r}")
-    description = entry.get("description", "") or ""
-    if not isinstance(description, str) or len(description) > 160:
-        raise Invalid(f"{kind}: die Beschreibung ist zu lang")
+    # the store says "summary" (one line) and "description" (paragraphs); a
+    # catalogue of its own may say "description" for the one line
+    short = entry.get("summary") if "summary" in entry else entry.get("description", "")
+    if not isinstance(short, str) or len(short) > 200:
+        raise Invalid(f"{kind}: die Kurzbeschreibung ist zu lang")
+    description = short
     suggested = entry.get("suggested", True)
     if not isinstance(suggested, bool):
         raise Invalid(f"{kind}: suggested ist true oder false")
-    return Tool(kind, name, port, posixpath.normpath(data), module, description, suggested)
+    return Tool(kind, name, port, posixpath.normpath(data), module, description, suggested, **_shown(entry))
+
+
+def _shown(entry: dict) -> dict:
+    """The store's words and mark, checked for size and shape only: Lucent
+    rebuilds the icon from an allow-list before it shows it (icons.py)."""
+    def text(v, cap):
+        return v.strip() if isinstance(v, str) and len(v) <= cap else ""
+    # beside a "summary", "description" is the store's paragraphs
+    details = entry.get("description", "") if "summary" in entry else entry.get("details", "")
+    out = {"details": text(details, 2000), "category": text(entry.get("category", ""), 40),
+           "publisher": text(entry.get("publisher", ""), 60)}
+    home = entry.get("homepage", "")
+    out["homepage"] = home if isinstance(home, str) and home.startswith("https://") and len(home) <= 200 else ""
+    icon = entry.get("icon", "")
+    out["icon"] = icon if isinstance(icon, str) and icon.lstrip().startswith("<svg") \
+        and len(icon.encode()) <= 16 * 1024 else ""
+    return out
 
 
 def tools_of(text: str) -> list[Tool]:
@@ -133,6 +161,10 @@ def tools_of(text: str) -> list[Tool]:
     entries = doc.get("tools") if isinstance(doc, dict) else doc
     out = []
     for entry in entries if isinstance(entries, list) else []:
+        if isinstance(entry, dict) and entry.get("kind") == "aperture":
+            out.append(dataclasses.replace(APERTURE, **_shown(entry),
+                                           description=str(entry.get("summary") or APERTURE.description)[:200]))
+            continue
         try:
             out.append(tool_of(entry))
         except Invalid:
@@ -160,7 +192,9 @@ def load_catalogue() -> dict[str, Tool]:
     for path in catalogue_files():
         for t in tools_of(_read(path)):
             found[t.kind] = t
-    return {**found, "aperture": APERTURE}
+    # Aperture stays the helper's code; a catalogue gives it only its words and mark
+    shown = found.pop("aperture", APERTURE)
+    return {**found, "aperture": shown if isinstance(shown, Aperture) else APERTURE}
 
 
 class _Catalogue(Mapping):

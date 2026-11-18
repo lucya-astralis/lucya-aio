@@ -692,3 +692,20 @@ def test_the_published_catalogue_is_kept_and_a_broken_one_is_not(fake, stack, mo
     assert stack.refresh_catalogue() is None and "spaeter" in templates.TOOLS
     settings.catalogue_url = "http://example.test/catalogue.json"
     assert "https" in stack.refresh_catalogue()
+
+
+def test_the_store_gives_words_and_marks_and_aperture_stays_code(fake, api, tmp_path):
+    svg = '<svg xmlns="http://www.w3.org/2000/svg"><rect width="1" height="1"/></svg>'
+    templates.store_published(json.dumps({"version": 1, "tools": [
+        {"kind": "wiki", "name": "Wiki", "port": 8099, "summary": "Notizen.", "description": "Lang.\n\nUnd mehr.",
+         "category": "Wissen", "publisher": "lucya.systems", "homepage": "https://wiki.example", "icon": svg},
+        {"kind": "aperture", "name": "Fake", "port": 1, "summary": "Fotos aus dem Store.", "icon": svg,
+         "category": "Medien"}]}))
+    by = {t["kind"]: t for t in api.get("/state").json()["tools"]}
+    w = by["wiki"]
+    assert (w["description"], w["details"], w["category"], w["homepage"], w["icon"]) == \
+        ("Notizen.", "Lang.\n\nUnd mehr.", "Wissen", "https://wiki.example", svg)
+    a = by["aperture"]
+    assert a["name"] == "Aperture" and a["default_port"] == 8090 and a["default_gallery_port"] == 8000
+    assert a["description"] == "Fotos aus dem Store." and a["icon"] == svg
+    assert isinstance(templates.TOOLS["aperture"], templates.Aperture)

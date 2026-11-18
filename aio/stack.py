@@ -114,7 +114,8 @@ class Stack:
         for kind, t in TOOLS.items():
             entry = found.get(kind) or {"kind": kind, "container": None, "state": "absent", "config": None}
             entry.update(name=t.name, default_port=t.port, base_url=t.base_url, job=jobs.get(kind),
-                         description=t.description, suggested=t.suggested)
+                         description=t.description, suggested=t.suggested, details=t.details,
+                         category=t.category, publisher=t.publisher, homepage=t.homepage, icon=t.icon)
             if kind == "aperture":
                 entry["default_gallery_port"] = t.gallery
             tools.append(entry)

@@ -65,6 +65,10 @@ Anlegen als `LUCENT_AIO_TOKEN` mitgibt.
 
 ## Der Katalog: neue Tools ohne neuen Helfer
 
+Die Tools kommen aus dem App-Store [lucya-store](../lucya-store) unter
+`store.lucya.systems`. Lucent zeigt sie unter **Verwaltung → Store** und
+installiert sie mit einem Klick, über diesen Helfer.
+
 Welche Tools der Helfer anlegen kann, steht in einem Katalog, nicht im Code.
 Nur Aperture ist Code, mit zwei Ports, einem Host-Ordner und eigener CLI.
 Jedes andere Tool ist eine Zeile:
@@ -83,14 +87,18 @@ Der Katalog kommt aus drei Quellen; spätere gewinnen je Art:
 
 1. [`aio/catalogue.json`](aio/catalogue.json), mit dem Helfer ausgeliefert
    (arca, Fila, strata, rawuggerl);
-2. der veröffentlichte Katalog unter `LUCYA_CATALOGUE_URL` (Vorgabe: diese
-   Datei auf `main` bei GitHub, nur `https://`). Der Helfer holt ihn beim Start
-   und bei jeder Update-Prüfung und hebt ihn in `/data/catalogue.json` auf.
-   Eine kaputte Datei ersetzt die letzte gute nicht. Leer gesetzt: keiner;
+2. der Katalog des Stores unter `LUCYA_CATALOGUE_URL` (Vorgabe
+   `https://store.lucya.systems/v1/catalogue.json`, nur `https://`). Der Helfer
+   holt ihn beim Start und bei jeder Update-Prüfung und hebt ihn in
+   `/data/catalogue.json` auf. Eine kaputte Datei ersetzt die letzte gute
+   nicht. Leer gesetzt: keiner;
 3. `/data/catalogue.d/*.json` auf diesem Rechner, für eigene Tools.
 
-Ein neues Tool steht so im laufenden Betrieb in Lucent unter **System → Tool
-hinzufügen**, ohne dass Helfer oder Lucent ein Update brauchen. Woher die
+Ein neues Tool steht so im laufenden Betrieb in Lucent im **Store**, ohne
+dass Helfer oder Lucent ein Update brauchen. Aus dem Store kommen auch Icon,
+Kurzbeschreibung, Text, Kategorie und Anbieter (`summary`, `description`,
+`icon`, `category`, `publisher`, `homepage`); der Helfer reicht sie in
+`/state` weiter, für Aperture nur diese. Woher die
 Zeile auch kommt: Das Image bleibt `<LUCYA_REGISTRY><art>:<kanal>`, und der
 Container ist so gehärtet wie jeder andere. Ein Katalog sagt, *was* angelegt
 wird, nie *wie*.
