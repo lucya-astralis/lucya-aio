@@ -16,7 +16,9 @@ import ipaddress
 import json
 import posixpath
 import re
+from collections.abc import Mapping
 from dataclasses import dataclass
+from pathlib import Path
 from urllib.parse import urlsplit
 
 from .config import settings
@@ -38,15 +40,18 @@ class Tool:
     name: str
     port: int                # inside the container, fixed by its image
     data: str                # where it keeps its data, inside the container
+    module: str = ""         # `python -m <module> --lucent-join …`; the kind when empty
+    description: str = ""
+    suggested: bool = True   # ticked in Lucent's first setup (a tool for one website is not)
 
     def join_argv(self, code: str, ui_url: str, role: str) -> list[str]:
-        return ["python", "-m", self.kind, "--lucent-join", LUCENT_INTERNAL, code,
+        return ["python", "-m", self.module or self.kind, "--lucent-join", LUCENT_INTERNAL, code,
                 "--ui-url", ui_url, "--base-url", self.base_url, "--role", role]
 
     def leave_argv(self) -> list[str]:
         """Forget the old pairing, before pairing again: Fila and strata
         refuse a join while they hold one, arca overwrites it."""
-        return ["python", "-m", self.kind, "--lucent-leave"]
+        return ["python", "-m", self.module or self.kind, "--lucent-leave"]
 
     @property
     def base_url(self) -> str:
@@ -68,12 +73,144 @@ class Aperture(Tool):
         return ["python", "-m", "aperture.cli", "lucent", "leave"]
 
 
-TOOLS = {t.kind: t for t in (
-    Tool("arca", "arca", 8070, "/data"),
-    Tool("fila", "Fila", 8085, "/data"),
-    Tool("strata", "strata", 8086, "/data"),
-    Aperture("aperture", "Aperture", 8090, "/data"),
-)}
+# ---- the catalogue: which tools the helper may make -----------------------------
+# Aperture is code (two ports, a host folder, a CLI of its own). Every other
+# tool is a line of data — kind, name, port, data folder, join module — so a
+# new one needs no new helper:
+#
+#   1. aio/catalogue.json, shipped with the helper;
+#   2. the published catalogue (LUCYA_CATALOGUE_URL), fetched on start-up and
+#      with every update check, kept in /data/catalogue.json;
+#   3. /data/catalogue.d/*.json on this host, for one's own tools.
+#
+# Later ones win per kind. Whatever the source, a tool's image is still
+# `<LUCYA_REGISTRY><kind>:<channel>` and its container just as hardened: a
+# catalogue names what to make, never how.
+
+APERTURE = Aperture("aperture", "Aperture", 8090, "/data", description="Fotos und Galerie", suggested=False)
+SHIPPED = Path(__file__).with_name("catalogue.json")
+CATALOGUE_MAX = 64 * 1024
+_KIND = re.compile(r"^[a-z][a-z0-9]{1,30}$")
+_MODULE = re.compile(r"^[a-z_][a-z0-9_]*(\.[a-z_][a-z0-9_]*){0,3}$")
+RESERVED = {"lucent", "aio", "aperture", "images", "backup", "backups"}
+
+
+def tool_of(entry) -> Tool:
+    """One catalogue line, checked. Raises Invalid with the reason."""
+    if not isinstance(entry, dict):
+        raise Invalid("ein Eintrag ist kein Objekt")
+    kind = entry.get("kind")
+    if not isinstance(kind, str) or not _KIND.fullmatch(kind) or kind in RESERVED:
+        raise Invalid(f"unbrauchbare Tool-Art {kind!r}")
+    name = entry.get("name") or kind
+    if not isinstance(name, str) or len(name) > 60 or any(ord(ch) < 32 for ch in name):
+        raise Invalid(f"{kind}: unbrauchbarer Name")
+    port = entry.get("port")
+    if not isinstance(port, int) or isinstance(port, bool) or not 1 <= port <= 65535:
+        raise Invalid(f"{kind}: der Port ist eine Zahl von 1 bis 65535")
+    data = entry.get("data", "/data")
+    if not isinstance(data, str) or not data.startswith("/") or ".." in data.split("/") or len(data) > 100:
+        raise Invalid(f"{kind}: der Datenordner ist ein absoluter Pfad")
+    module = entry.get("module", "") or ""
+    if not isinstance(module, str) or (module and not _MODULE.fullmatch(module)):
+        raise Invalid(f"{kind}: unbrauchbares Modul {module!r}")
+    description = entry.get("description", "") or ""
+    if not isinstance(description, str) or len(description) > 160:
+        raise Invalid(f"{kind}: die Beschreibung ist zu lang")
+    suggested = entry.get("suggested", True)
+    if not isinstance(suggested, bool):
+        raise Invalid(f"{kind}: suggested ist true oder false")
+    return Tool(kind, name, port, posixpath.normpath(data), module, description, suggested)
+
+
+def tools_of(text: str) -> list[Tool]:
+    """Every usable line of a catalogue file; a broken line is left out, a
+    broken file gives nothing (and the other sources still count)."""
+    try:
+        doc = json.loads(text)
+    except ValueError:
+        return []
+    entries = doc.get("tools") if isinstance(doc, dict) else doc
+    out = []
+    for entry in entries if isinstance(entries, list) else []:
+        try:
+            out.append(tool_of(entry))
+        except Invalid:
+            continue
+    return out
+
+
+def _read(path: Path) -> str:
+    try:
+        if path.stat().st_size > CATALOGUE_MAX:
+            return ""
+        return path.read_text(encoding="utf-8")
+    except OSError:
+        return ""
+
+
+def catalogue_files() -> list[Path]:
+    local = sorted((settings.data_dir / "catalogue.d").glob("*.json")) \
+        if (settings.data_dir / "catalogue.d").is_dir() else []
+    return [SHIPPED, settings.data_dir / "catalogue.json", *local]
+
+
+def load_catalogue() -> dict[str, Tool]:
+    found: dict[str, Tool] = {}
+    for path in catalogue_files():
+        for t in tools_of(_read(path)):
+            found[t.kind] = t
+    return {**found, "aperture": APERTURE}
+
+
+class _Catalogue(Mapping):
+    """TOOLS as before (`kind in TOOLS`, `TOOLS[kind]`, iterating), read
+    afresh from the catalogue files whenever one of them changed."""
+
+    def __init__(self):
+        self._stamp = None
+        self._tools: dict[str, Tool] = {}
+
+    def _now(self) -> dict[str, Tool]:
+        stamp = []
+        for p in catalogue_files():
+            try:
+                st = p.stat()
+                stamp.append((str(p), st.st_mtime_ns, st.st_size))
+            except OSError:
+                stamp.append((str(p), None, None))
+        stamp = tuple(stamp)
+        if stamp != self._stamp:
+            self._tools, self._stamp = load_catalogue(), stamp
+        return self._tools
+
+    def __getitem__(self, kind: str) -> Tool:
+        return self._now()[kind]
+
+    def __iter__(self):
+        return iter(self._now())
+
+    def __len__(self) -> int:
+        return len(self._now())
+
+
+TOOLS = _Catalogue()
+
+
+def store_published(text: str) -> int:
+    """The published catalogue, kept for the next start; how many tools it
+    names. A file that names none is not kept (a broken download)."""
+    if len(text.encode("utf-8")) > CATALOGUE_MAX:
+        raise Invalid("Der Katalog ist zu groß.")
+    found = tools_of(text)
+    if not found:
+        raise Invalid("Der Katalog nennt kein brauchbares Tool.")
+    path = settings.data_dir / "catalogue.json"
+    path.parent.mkdir(parents=True, exist_ok=True)
+    tmp = path.with_suffix(".tmp")
+    tmp.write_text(text, encoding="utf-8")
+    tmp.replace(path)
+    return len(found)
 
 
 def ports_of(values: dict) -> set[int]:

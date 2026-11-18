@@ -1,0 +1,10 @@
+{
+  "version": 1,
+  "tools": [
+    {"kind": "arca", "name": "arca", "port": 8070, "description": "Inventar und Geräte"},
+    {"kind": "fila", "name": "Fila", "port": 8085, "description": "Tickets und Aufgaben"},
+    {"kind": "strata", "name": "strata", "port": 8086, "description": "Aufbau des Netzes"},
+    {"kind": "rawuggerl", "name": "rawuggerl.de Verwaltung", "port": 8087,
+     "description": "Termine, Presse, Galerie und Mitglieder von rawuggerl.de", "suggested": false}
+  ]
+}

@@ -113,7 +113,8 @@ class Stack:
         tools = []
         for kind, t in TOOLS.items():
             entry = found.get(kind) or {"kind": kind, "container": None, "state": "absent", "config": None}
-            entry.update(name=t.name, default_port=t.port, base_url=t.base_url, job=jobs.get(kind))
+            entry.update(name=t.name, default_port=t.port, base_url=t.base_url, job=jobs.get(kind),
+                         description=t.description, suggested=t.suggested)
             if kind == "aperture":
                 entry["default_gallery_port"] = t.gallery
             tools.append(entry)
@@ -253,7 +254,27 @@ class Stack:
         self._spawn(self._check, "check")
         return {"checking": True}
 
+    def refresh_catalogue(self) -> str | None:
+        """Fetch the published catalogue (templates.py); None when it worked,
+        else why not. The tools already known stay either way."""
+        url = settings.catalogue_url
+        if not url:
+            return None
+        if not url.startswith("https://"):
+            return "LUCYA_CATALOGUE_URL muss mit https:// beginnen."
+        import urllib.request
+        try:
+            req = urllib.request.Request(url, headers={"User-Agent": "lucya-aio"})
+            with urllib.request.urlopen(req, timeout=10) as r:
+                text = r.read(templates.CATALOGUE_MAX + 1).decode("utf-8")
+            templates.store_published(text)
+        except (OSError, ValueError, Invalid) as e:
+            log.warning("catalogue: %s", e)
+            return str(e)
+        return None
+
     def _check(self, _: str) -> None:
+        self.refresh_catalogue()
         try:
             for kind in ("lucent", *TOOLS):
                 if kind in settings.image_overrides or self.docker.inspect(settings.container(kind)) is None:

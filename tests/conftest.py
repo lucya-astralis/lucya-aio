@@ -161,7 +161,7 @@ class InlineStack(Stack):
 
 @pytest.fixture()
 def fake(tmp_path):
-    config.configure(data_dir=tmp_path, self_id="",
+    config.configure(data_dir=tmp_path, self_id="", catalogue_url="",
                      image_overrides={"lucent": "lucent:aio", "arca": "arca:aio", "fila": "fila:aio",
                                       "strata": "strata:aio", "aperture": "aperture:aio"},
                      allowed_paths=["/srv/fotos"])

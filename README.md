@@ -47,7 +47,7 @@ Wer den Docker-Socket hat, ist root auf dem Rechner. Das gilt auch für
 diesen Helfer, deshalb läuft er offen als root. Begrenzt ist, was seine API
 annimmt ([aio/templates.py](aio/templates.py)):
 
-- nur die Tools aus `TOOLS` (arca, Fila, strata, Aperture), nur ihr Image
+- nur die Tools aus dem Katalog (siehe unten), nur ihr Image
   (`ghcr.io/lucya-astralis/<tool>:<kanal>`);
 - von Lucent kommen nur Werte: Host-Port, Bind-Adresse, UI-Adresse, beim
   Koppeln Code und Rolle. Alles wird geprüft;
@@ -62,6 +62,38 @@ annimmt ([aio/templates.py](aio/templates.py)):
 
 Die API verlangt das Token aus `/data/aio.json`, das der Helfer Lucent beim
 Anlegen als `LUCENT_AIO_TOKEN` mitgibt.
+
+## Der Katalog: neue Tools ohne neuen Helfer
+
+Welche Tools der Helfer anlegen kann, steht in einem Katalog, nicht im Code.
+Nur Aperture ist Code, mit zwei Ports, einem Host-Ordner und eigener CLI.
+Jedes andere Tool ist eine Zeile:
+
+```json
+{"kind": "rawuggerl", "name": "rawuggerl.de Verwaltung", "port": 8087,
+ "description": "Termine, Presse, Galerie und Mitglieder", "suggested": false}
+```
+
+Dazu kann eine Zeile noch `data` (Datenordner im Container, Vorgabe `/data`)
+und `module` (`python -m <module> --lucent-join …`, Vorgabe die Art) haben.
+`suggested: false` heißt: In Lucents Einrichtung ist das Tool nicht
+vorausgewählt.
+
+Der Katalog kommt aus drei Quellen; spätere gewinnen je Art:
+
+1. [`aio/catalogue.json`](aio/catalogue.json), mit dem Helfer ausgeliefert
+   (arca, Fila, strata, rawuggerl);
+2. der veröffentlichte Katalog unter `LUCYA_CATALOGUE_URL` (Vorgabe: diese
+   Datei auf `main` bei GitHub, nur `https://`). Der Helfer holt ihn beim Start
+   und bei jeder Update-Prüfung und hebt ihn in `/data/catalogue.json` auf.
+   Eine kaputte Datei ersetzt die letzte gute nicht. Leer gesetzt: keiner;
+3. `/data/catalogue.d/*.json` auf diesem Rechner, für eigene Tools.
+
+Ein neues Tool steht so im laufenden Betrieb in Lucent unter **System → Tool
+hinzufügen**, ohne dass Helfer oder Lucent ein Update brauchen. Woher die
+Zeile auch kommt: Das Image bleibt `<LUCYA_REGISTRY><art>:<kanal>`, und der
+Container ist so gehärtet wie jeder andere. Ein Katalog sagt, *was* angelegt
+wird, nie *wie*.
 
 ## API
 

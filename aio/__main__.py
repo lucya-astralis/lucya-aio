@@ -58,6 +58,8 @@ def main() -> int:
                 log.warning("Zeitplan: %s", e)
             time.sleep(30)
     threading.Thread(target=clock, daemon=True, name="clock").start()
+    # the published catalogue: new kinds of tools without a new helper
+    threading.Thread(target=stack.refresh_catalogue, daemon=True, name="catalogue").start()
     import uvicorn
     uvicorn.run(create_app(stack, values["token"]), host="0.0.0.0", port=settings.api_port, log_level="warning")
     return 0

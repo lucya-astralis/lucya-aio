@@ -128,7 +128,9 @@ def test_state_shows_every_tool_and_its_step(fake, api):
     api.put("/tools/strata", json={"port": 8086, "ui_url": "http://x.test:8086"})
     s = api.get("/state").json()
     by = {t["kind"]: t for t in s["tools"]}
-    assert set(by) == {"arca", "fila", "strata", "aperture"}
+    assert set(by) == {"arca", "fila", "strata", "rawuggerl", "aperture"}
+    assert by["rawuggerl"]["name"] == "rawuggerl.de Verwaltung" and by["rawuggerl"]["default_port"] == 8087
+    assert by["arca"]["suggested"] and not by["rawuggerl"]["suggested"] and not by["aperture"]["suggested"]
     assert by["arca"]["state"] == "absent" and by["arca"]["default_port"] == 8070
     assert by["strata"]["state"] == "running" and by["strata"]["job"]["step"] == "ready"
     assert by["strata"]["base_url"] == "http://strata:8086" and 8086 in s["ports_in_use"]
@@ -648,3 +650,45 @@ def test_a_restore_says_which_backup_came_before(with_self, stack, api):
     api.post(f"/backups/{run}/restore", json={"kinds": ["arca"]})
     r = _job(api, "arca")["result"]
     assert r["outcome"] == "restored" and r["run"] == run and r["backup"] == stack.backups.list()[0]["name"]
+
+
+# ---- the catalogue: new kinds of tools without a new helper ---------------------
+def test_a_tool_from_the_hosts_catalogue_can_be_made_and_joined(fake, api, tmp_path):
+    (tmp_path / "catalogue.d").mkdir()
+    (tmp_path / "catalogue.d" / "eigen.json").write_text(json.dumps({"tools": [
+        {"kind": "wiki", "name": "Wiki", "port": 8099, "module": "wiki.cli", "description": "Notizen"},
+        {"kind": "Böse", "name": "x", "port": 1},                    # not a kind: left out
+        {"kind": "aperture", "name": "Fake", "port": 1},             # Aperture stays the helper's
+        {"kind": "lucent", "name": "Fake", "port": 1}]}), encoding="utf-8")
+    by = {t["kind"]: t for t in api.get("/state").json()["tools"]}
+    assert by["wiki"]["name"] == "Wiki" and by["wiki"]["description"] == "Notizen"
+    assert "Böse" not in by and by["aperture"]["name"] == "Aperture"
+    settings.image_overrides["wiki"] = "arca:aio"
+    assert api.put("/tools/wiki", json={"port": 8099, "ui_url": "http://x.test:8099"}).status_code == 202
+    c = tool(fake, "wiki")
+    assert c["body"]["Image"] == "arca:aio" and c["body"]["HostConfig"]["CapDrop"] == ["ALL"]
+    r = api.post("/tools/wiki/join", json={"code": "ABCD-EFGH-JKLM", "role": "editor"})
+    assert r.status_code == 200, r.text
+    assert fake.execs[-1][1][:4] == ["python", "-m", "wiki.cli", "--lucent-join"]
+
+
+def test_the_published_catalogue_is_kept_and_a_broken_one_is_not(fake, stack, monkeypatch, tmp_path):
+    good = json.dumps({"tools": [{"kind": "neu", "name": "Neu", "port": 8111}]})
+    assert templates.store_published(good) == 1
+    assert "neu" in templates.TOOLS and templates.TOOLS["neu"].port == 8111
+    for bad in ("kein json", json.dumps({"tools": [{"kind": "x"}]})):
+        try:
+            templates.store_published(bad)
+            raise AssertionError("a broken catalogue must not be kept")
+        except templates.Invalid:
+            pass
+    assert "neu" in templates.TOOLS                       # the last good one stays
+
+    import io
+    import urllib.request
+    settings.catalogue_url = "https://example.test/catalogue.json"
+    later = json.dumps({"tools": [{"kind": "spaeter", "name": "Später", "port": 8112}]}).encode()
+    monkeypatch.setattr(urllib.request, "urlopen", lambda req, timeout: io.BytesIO(later))
+    assert stack.refresh_catalogue() is None and "spaeter" in templates.TOOLS
+    settings.catalogue_url = "http://example.test/catalogue.json"
+    assert "https" in stack.refresh_catalogue()
