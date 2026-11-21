@@ -128,7 +128,7 @@ def test_state_shows_every_tool_and_its_step(fake, api):
     api.put("/tools/strata", json={"port": 8086, "ui_url": "http://x.test:8086"})
     s = api.get("/state").json()
     by = {t["kind"]: t for t in s["tools"]}
-    assert set(by) == {"arca", "fila", "strata", "rawuggerl", "aperture"}
+    assert set(by) == {"arca", "fila", "strata", "rawuggerl", "aperture", "akari"}
     assert by["rawuggerl"]["name"] == "rawuggerl" and by["rawuggerl"]["default_port"] == 8087
     assert by["arca"]["suggested"] and not by["rawuggerl"]["suggested"] and not by["aperture"]["suggested"]
     assert by["arca"]["state"] == "absent" and by["arca"]["default_port"] == 8070
@@ -709,3 +709,62 @@ def test_the_store_gives_words_and_marks_and_aperture_stays_code(fake, api, tmp_
     assert a["name"] == "Aperture" and a["default_port"] == 8090 and a["default_gallery_port"] == 8000
     assert a["description"] == "Fotos aus dem Store." and a["icon"] == svg
     assert isinstance(templates.TOOLS["aperture"], templates.Aperture)
+
+
+# ---- Akari OS: real accounts, so ten capabilities; locked or with sudo -------------------------
+AKARI = {"port": 8130, "ui_url": "https://akari.example"}
+
+
+@pytest.fixture
+def with_akari(tmp_path):
+    """Akari is offered only when a catalogue names it (the store does)."""
+    d = settings.data_dir / "catalogue.d"
+    d.mkdir(parents=True, exist_ok=True)
+    (d / "akari.json").write_text(json.dumps([{"kind": "akari", "port": 1, "summary": "Desktop", "data": "/etc"}]))
+    yield
+    (d / "akari.json").unlink()
+
+
+def test_akari_is_offered_with_an_ssh_default_and_not_ticked(fake, api):
+    by = {t["kind"]: t for t in api.get("/state").json()["tools"]}
+    assert by["akari"]["default_ssh_port"] == 2222 and by["akari"]["default_port"] == 8130
+    assert not by["akari"]["suggested"]
+
+
+def test_akari_locked_keeps_a_read_only_root_and_ten_capabilities(fake, api, with_akari):
+    assert api.put("/tools/akari", json=AKARI).status_code == 202
+    body = tool(fake, "akari")["body"]
+    hc = body["HostConfig"]
+    assert hc["CapDrop"] == ["ALL"] and sorted(hc["CapAdd"]) == sorted(templates.AKARI_CAPS)
+    assert hc["ReadonlyRootfs"] and hc["SecurityOpt"] == ["no-new-privileges:true"]
+    assert hc["Privileged"] is False and hc["NetworkMode"] == "lucya"
+    assert hc["Mounts"] == [{"Type": "volume", "Source": "lucya-akari-data", "Target": "/data"}]
+    assert hc["PortBindings"] == {"8130/tcp": [{"HostIp": "0.0.0.0", "HostPort": "8130"}]}   # the catalogue's port 1 means nothing
+    assert hc["ShmSize"] == 512 * 1024 * 1024 and "/run" in hc["Tmpfs"]
+    assert not any(e.startswith("AKARI_SSH_PUBLIC=") for e in body["Env"])
+
+
+def test_akari_with_sudo_and_ssh(fake, api, with_akari):
+    r = api.put("/tools/akari", json={**AKARI, "rights": "sudo", "ssh_port": 2222})
+    assert r.status_code == 202, r.text
+    body = tool(fake, "akari")["body"]
+    hc = body["HostConfig"]
+    assert hc["ReadonlyRootfs"] is False and hc["SecurityOpt"] == [] and sorted(hc["CapAdd"]) == sorted(templates.AKARI_CAPS)
+    assert hc["PortBindings"]["2222/tcp"] == [{"HostIp": "0.0.0.0", "HostPort": "2222"}]
+    assert "AKARI_SSH_PUBLIC=akari.example:2222" in body["Env"]
+
+
+@pytest.mark.parametrize("extra, word", [({"rights": "root"}, "Rechte"), ({"ssh_port": "22"}, "SSH-Port"),
+                                         ({"ssh_port": 8130}, "vergeben")])
+def test_akari_takes_only_its_two_rights_and_a_free_ssh_port(fake, api, with_akari, extra, word):
+    r = api.put("/tools/akari", json={**AKARI, **extra})
+    assert r.status_code == 422 and word in r.json()["detail"] and not fake.containers
+
+
+def test_akari_joins_and_leaves_with_its_venv(fake, api, with_akari):
+    api.put("/tools/akari", json=AKARI)
+    api.post("/tools/akari/join", json={"code": "ABCD-EFGH-JKLM", "again": True})
+    argvs = [argv for _, argv in fake.execs]
+    assert argvs[-2] == ["/opt/venv/bin/python", "-m", "akari", "--lucent-leave"]
+    assert argvs[-1] == ["/opt/venv/bin/python", "-m", "akari", "--lucent-join", "http://lucent:8060", "ABCD-EFGH-JKLM",
+                         "--ui-url", "https://akari.example", "--base-url", "http://akari:8130"]

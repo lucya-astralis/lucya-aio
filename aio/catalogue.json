@@ -61,6 +61,17 @@
    "category": "Netz",
    "publisher": "lucya.systems",
    "icon": "<svg viewBox=\"0 0 121.70 121.70\" xmlns=\"http://www.w3.org/2000/svg\"><rect width=\"121.70\" height=\"121.70\" rx=\"21.91\" fill=\"#000\" /><path fill=\"#fff\" d=\"M14,102.85L98,102.85L107.7,78.85L23.7,78.85ZM24,72.85L88,72.85L97.7,48.85L33.7,48.85ZM34,42.85L78,42.85L87.7,18.85L43.7,18.85Z\" /></svg>\n"
+  },
+  {
+   "kind": "akari",
+   "name": "Akari OS",
+   "port": 8130,
+   "category": "Arbeitsplatz",
+   "suggested": false,
+   "summary": "Ein Desktop im Browser mit einem echten Debian darunter.",
+   "description": "Akari OS ist ein Arbeitsplatz im Browser: Fenster, Leiste, Startmenü, Dateien, Terminal, Editor, Musik und Linux-Programme wie Firefox als Fenster. Darunter läuft ein echtes Debian, jedes Konto ist ein Linux-Benutzer mit eigenem Home und eigenen Desktops.\n\nIn Lucent: Zustand und Auslastung, Konten anlegen und verwalten, SSH, Wartung, und Anmelden mit dem Lucent-Konto. Das erste Konto legst du nach dem Installieren in Lucent an (Akari OS → Konten).\n\nBeim Installieren wählst du die Rechte: gesperrt (nur lesbares System, ohne sudo und apt) oder mit sudo und apt, damit Konten, die verwalten, Programme nachinstallieren können. Beide Varianten behalten nur die Rechte, die echte Linux-Konten brauchen.",
+   "publisher": "lucya.systems",
+   "data": "/data"
   }
  ]
 }

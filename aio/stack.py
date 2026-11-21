@@ -118,6 +118,8 @@ class Stack:
                          category=t.category, publisher=t.publisher, homepage=t.homepage, icon=t.icon)
             if kind == "aperture":
                 entry["default_gallery_port"] = t.gallery
+            if kind == "akari":
+                entry["default_ssh_port"] = t.ssh
             tools.append(entry)
         used = sorted(set().union(*(templates.ports_of(v.get("config") or {}) for v in found.values())))
         lucent = found.get("lucent")

@@ -5,6 +5,11 @@ whoever can talk to the helper can make exactly these containers, with the
 values checked in clean(), and nothing else. No privileged mode, no host
 network, no capabilities, no host folders; one named volume for the data.
 
+Two tools are code here rather than a line of the catalogue: Aperture (a host
+folder for its photos) and Akari OS (a desktop with real Linux accounts: its
+container keeps the ten capabilities it needs to be those accounts, and with
+"sudo" a writable root so admins can install packages; see akari_body).
+
 A tool is reached by Lucent at http://<kind>:<port> on the network `lucya`
 (the alias is the kind), and pairs with Lucent at http://lucent:8060 on the
 same network: no call between them leaves the machine.
@@ -80,6 +85,29 @@ class Aperture(Tool):
         return ["python", "-m", "aperture.cli", "lucent", "leave"]
 
 
+@dataclass(frozen=True)
+class Akari(Tool):
+    """Akari OS: a desktop in the browser with real Linux accounts. Its image
+    has no `python` on PATH (accounts would see it), so the venv's by path;
+    an optional SSH port beside the web port."""
+    ssh: int = 2222
+
+    def join_argv(self, code: str, ui_url: str, role: str) -> list[str]:
+        # no --role: who may do what in Akari follows its own accounts (linked to Lucent people)
+        return ["/opt/venv/bin/python", "-m", "akari", "--lucent-join", LUCENT_INTERNAL, code,
+                "--ui-url", ui_url, "--base-url", self.base_url]
+
+    def leave_argv(self) -> list[str]:
+        return ["/opt/venv/bin/python", "-m", "akari", "--lucent-leave"]
+
+
+# the rights an Akari container may have, and no others: these ten capabilities
+# (akarid starts each account's session as that user, sshd, and with "sudo" dpkg)
+AKARI_CAPS = ["SETUID", "SETGID", "CHOWN", "FOWNER", "DAC_OVERRIDE", "KILL",
+              "SYS_CHROOT", "AUDIT_WRITE", "FSETID", "SETFCAP"]
+AKARI_RIGHTS = ("locked", "sudo")
+
+
 # ---- the catalogue: which tools the helper may make -----------------------------
 # Aperture is code (two ports, a host folder, a CLI of its own). Every other
 # tool is a line of data — kind, name, port, data folder, join module — so a
@@ -96,11 +124,12 @@ class Aperture(Tool):
 # catalogue names what to make, never how.
 
 APERTURE = Aperture("aperture", "Aperture", 8090, "/data", description="Fotos und Galerie", suggested=False)
+AKARI = Akari("akari", "Akari OS", 8130, "/data", description="Desktop im Browser mit Debian darunter", suggested=False)
 SHIPPED = Path(__file__).with_name("catalogue.json")
 CATALOGUE_MAX = 64 * 1024
 _KIND = re.compile(r"^[a-z][a-z0-9]{1,30}$")
 _MODULE = re.compile(r"^[a-z_][a-z0-9_]*(\.[a-z_][a-z0-9_]*){0,3}$")
-RESERVED = {"lucent", "aio", "aperture", "images", "backup", "backups"}
+RESERVED = {"lucent", "aio", "aperture", "akari", "images", "backup", "backups"}
 
 
 def tool_of(entry) -> Tool:
@@ -161,9 +190,11 @@ def tools_of(text: str) -> list[Tool]:
     entries = doc.get("tools") if isinstance(doc, dict) else doc
     out = []
     for entry in entries if isinstance(entries, list) else []:
-        if isinstance(entry, dict) and entry.get("kind") == "aperture":
-            out.append(dataclasses.replace(APERTURE, **_shown(entry),
-                                           description=str(entry.get("summary") or APERTURE.description)[:200]))
+        if isinstance(entry, dict) and entry.get("kind") in ("aperture", "akari"):
+            base = APERTURE if entry["kind"] == "aperture" else AKARI
+            # a catalogue gives these two their words and mark, never their container
+            out.append(dataclasses.replace(base, **_shown(entry),
+                                           description=str(entry.get("summary") or base.description)[:200]))
             continue
         try:
             out.append(tool_of(entry))
@@ -194,7 +225,11 @@ def load_catalogue() -> dict[str, Tool]:
             found[t.kind] = t
     # Aperture stays the helper's code; a catalogue gives it only its words and mark
     shown = found.pop("aperture", APERTURE)
-    return {**found, "aperture": shown if isinstance(shown, Aperture) else APERTURE}
+    out = {**found, "aperture": shown if isinstance(shown, Aperture) else APERTURE}
+    # Akari only when a catalogue names it (the store decides it is offered), and then as code
+    if "akari" in out and not isinstance(out["akari"], Akari):
+        out["akari"] = AKARI
+    return out
 
 
 class _Catalogue(Mapping):
@@ -249,7 +284,7 @@ def store_published(text: str) -> int:
 
 def ports_of(values: dict) -> set[int]:
     """Every host port a tool's values hold."""
-    return {p for p in (values.get("port"), values.get("gallery_port")) if p}
+    return {p for p in (values.get("port"), values.get("gallery_port"), values.get("ssh_port")) if p}
 
 
 def clean(kind: str, body: dict) -> dict:
@@ -276,6 +311,16 @@ def clean(kind: str, body: dict) -> dict:
         if gallery in (port, settings.lucent_port):
             raise Invalid(f"Port {gallery} ist schon vergeben.")
         values.update(gallery_port=gallery, photos=clean_photos(body.get("photos")))
+    if kind == "akari":
+        rights = body.get("rights", "locked")
+        if rights not in AKARI_RIGHTS:
+            raise Invalid("Die Rechte sind locked (ohne sudo) oder sudo.")
+        ssh = body.get("ssh_port", 0) or 0
+        if not isinstance(ssh, int) or isinstance(ssh, bool) or not 0 <= ssh <= 65535:
+            raise Invalid("Der SSH-Port ist eine Zahl von 1 bis 65535, oder leer für kein SSH.")
+        if ssh and ssh in (port, settings.lucent_port):
+            raise Invalid(f"Port {ssh} ist schon vergeben.")
+        values.update(rights=rights, ssh_port=ssh)
     return values
 
 
@@ -356,10 +401,41 @@ def _hardened(image: str, kind: str, config: dict, env: dict, mounts: list[dict]
 def tool_body(kind: str, values: dict) -> dict:
     if kind == "aperture":
         return aperture_body(values)
+    if kind == "akari":
+        return akari_body(values)
     t = TOOLS[kind]
     env = {"TZ": settings.tz, "FORWARDED_ALLOW_IPS": _forwarded(values["bind"])}
     mounts = [{"Type": "volume", "Source": settings.volume(kind), "Target": t.data}]
     return _hardened(settings.image(kind), kind, values, env, mounts, {t.port: values["port"]}, values["bind"])
+
+
+def akari_body(values: dict) -> dict:
+    """As Akari's own compose files. Both rights keep everything else hardened
+    (no privileged mode, no host folders, one volume, its network) and get the
+    same ten capabilities and nothing more:
+      locked  read-only root and no-new-privileges (compose.locked.yaml): the
+              accounts, desktops, apps and SSH work, sudo and apt do not;
+      sudo    a writable root and setuid allowed (compose.yaml): admins may
+              `sudo apt install`; what they install is kept in the volume and
+              put back after an update.
+    Firefox wants more than Docker's 64 MB of /dev/shm."""
+    t = TOOLS["akari"]
+    locked = values.get("rights", "locked") == "locked"
+    ports = {t.port: values["port"]}
+    env = {"TZ": settings.tz, "FORWARDED_ALLOW_IPS": _forwarded(values["bind"]), "AKARI_HOSTNAME": "akari"}
+    if values.get("ssh_port"):
+        ports[t.ssh] = values["ssh_port"]
+        env["AKARI_SSH_PUBLIC"] = f"{urlsplit(values['ui_url']).hostname}:{values['ssh_port']}"
+    mounts = [{"Type": "volume", "Source": settings.volume("akari"), "Target": "/data"}]
+    body = _hardened(settings.image("akari"), "akari", values, env, mounts, ports, values["bind"])
+    hc = body["HostConfig"]
+    hc["CapAdd"] = list(AKARI_CAPS)
+    hc["ReadonlyRootfs"] = locked
+    hc["SecurityOpt"] = ["no-new-privileges:true"] if locked else []
+    hc["Tmpfs"] = {"/tmp": "rw,noexec,nosuid,size=128m", "/run": "rw,noexec,nosuid,size=4m,mode=755"}
+    hc["ShmSize"] = 512 * 1024 * 1024
+    body["Hostname"] = "akari"
+    return body
 
 
 def aperture_body(values: dict) -> dict:
