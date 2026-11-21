@@ -74,7 +74,7 @@ Nur Aperture ist Code, mit zwei Ports, einem Host-Ordner und eigener CLI.
 Jedes andere Tool ist eine Zeile:
 
 ```json
-{"kind": "rawuggerl", "name": "rawuggerl.de Verwaltung", "port": 8087,
+{"kind": "rawuggerl", "name": "rawuggerl", "port": 8087,
  "description": "Termine, Presse, Galerie und Mitglieder", "suggested": false}
 ```
 

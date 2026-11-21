@@ -129,7 +129,7 @@ def test_state_shows_every_tool_and_its_step(fake, api):
     s = api.get("/state").json()
     by = {t["kind"]: t for t in s["tools"]}
     assert set(by) == {"arca", "fila", "strata", "rawuggerl", "aperture"}
-    assert by["rawuggerl"]["name"] == "rawuggerl.de Verwaltung" and by["rawuggerl"]["default_port"] == 8087
+    assert by["rawuggerl"]["name"] == "rawuggerl" and by["rawuggerl"]["default_port"] == 8087
     assert by["arca"]["suggested"] and not by["rawuggerl"]["suggested"] and not by["aperture"]["suggested"]
     assert by["arca"]["state"] == "absent" and by["arca"]["default_port"] == 8070
     assert by["strata"]["state"] == "running" and by["strata"]["job"]["step"] == "ready"
